@@ -137,8 +137,8 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		userContent := req.Content
 		session.AddMessage("user", userContent)
 
-		if s.cfg.APIKey == "" {
-			reply := fmt.Sprintf("(no model provider configured — set ANTHROPIC_API_KEY; received: %q)", userContent)
+		if s.cfg.APIKey == "" && s.anthropic.Token == "" {
+			reply := fmt.Sprintf("(no model provider configured — set CF_API_TOKEN; received: %q)", userContent)
 			session.AddMessage("assistant", reply)
 			if err := sendFrame(WSFrame{Type: "message", Role: "assistant", Content: reply}); err != nil {
 				break

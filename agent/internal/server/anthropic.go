@@ -7,83 +7,111 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 )
 
 const (
-	anthropicAPIURL  = "https://api.anthropic.com/v1/messages"
-	anthropicVersion = "2023-06-01"
-	defaultModel     = "claude-haiku-4-5-20251001"
-	maxIterations    = 10
-	systemPrompt     = "You are the Bordo platform assistant. You help users manage their software factory: create projects, trigger builds, deploy services, and query observability data. Use the available tools to take actions on behalf of the user."
+	defaultLLMURL   = "https://api.cloudflare.com/client/v4/accounts/5ef26bd0b28e4de5cd395bf98f4a843d/ai/v1/chat/completions"
+	defaultLLMModel = "deepseek-ai/DeepSeek-V4.1-Flash"
+	maxIterations   = 10
+	systemPrompt    = "You are the Bordo platform assistant. You help users manage their software factory: create projects, trigger builds, deploy services, and query observability data. Use the available tools to take actions on behalf of the user."
 )
 
-// AnthropicTool mirrors the Anthropic API tool definition.
+// AnthropicTool keeps the same name so callers in server.go don't change.
 type AnthropicTool struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
 	InputSchema map[string]any `json:"input_schema"`
 }
 
-// ContentBlock is one element in a message's content array.
-type ContentBlock struct {
-	Type string `json:"type"`
-	// type=text
-	Text string `json:"text,omitempty"`
-	// type=tool_use
-	ID    string         `json:"id,omitempty"`
-	Name  string         `json:"name,omitempty"`
-	Input map[string]any `json:"input,omitempty"`
-	// type=tool_result
-	ToolUseID string `json:"tool_use_id,omitempty"`
-	Content   string `json:"content,omitempty"`
-}
-
-// AnthropicMessage is one turn in the API conversation.
+// AnthropicMessage keeps the same name so session.go doesn't change.
 type AnthropicMessage struct {
 	Role    string `json:"role"`
-	Content any    `json:"content"` // string OR []ContentBlock
+	Content any    `json:"content"` // string OR []oaiToolCall (assistant turns with tool calls)
 }
 
-type apiRequest struct {
-	Model     string             `json:"model"`
-	MaxTokens int                `json:"max_tokens"`
-	System    string             `json:"system"`
-	Messages  []AnthropicMessage `json:"messages"`
-	Tools     []AnthropicTool    `json:"tools,omitempty"`
+// OpenAI Chat Completions wire types.
+type oaiTool struct {
+	Type     string      `json:"type"` // "function"
+	Function oaiFunction `json:"function"`
 }
 
-type apiResponse struct {
-	StopReason string         `json:"stop_reason"`
-	Content    []ContentBlock `json:"content"`
-	Error      *struct {
-		Type    string `json:"type"`
+type oaiFunction struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  map[string]any `json:"parameters"`
+}
+
+type oaiMessage struct {
+	Role       string        `json:"role"`
+	Content    string        `json:"content,omitempty"`
+	ToolCalls  []oaiToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string        `json:"tool_call_id,omitempty"`
+}
+
+type oaiToolCall struct {
+	ID       string      `json:"id"`
+	Type     string      `json:"type"` // "function"
+	Function oaiFuncCall `json:"function"`
+}
+
+type oaiFuncCall struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"` // JSON string
+}
+
+type oaiRequest struct {
+	Model     string       `json:"model"`
+	MaxTokens int          `json:"max_tokens"`
+	Messages  []oaiMessage `json:"messages"`
+	Tools     []oaiTool    `json:"tools,omitempty"`
+}
+
+type oaiResponse struct {
+	Choices []struct {
+		Message      oaiMessage `json:"message"`
+		FinishReason string     `json:"finish_reason"`
+	} `json:"choices"`
+	Error *struct {
 		Message string `json:"message"`
+		Type    string `json:"type"`
 	} `json:"error"`
 }
 
-// AnthropicClient calls the Anthropic Messages API.
+// AnthropicClient wraps the Cloudflare AI Gateway (OpenAI-compatible) endpoint.
+// The name is kept for backward compatibility with server.go.
 type AnthropicClient struct {
-	APIKey string
+	Token  string
 	Model  string
+	APIURL string
 	http   *http.Client
 }
 
+// NewAnthropicClient creates a client. Reads CF_API_TOKEN from env first;
+// falls back to the apiKey argument (which may come from BORDO_AGENT_TOKEN or config).
 func NewAnthropicClient(apiKey string) *AnthropicClient {
+	token := os.Getenv("CF_API_TOKEN")
+	if token == "" {
+		token = apiKey
+	}
+	model := os.Getenv("BORDO_LLM_MODEL")
+	if model == "" {
+		model = defaultLLMModel
+	}
+	url := os.Getenv("BORDO_LLM_URL")
+	if url == "" {
+		url = defaultLLMURL
+	}
 	return &AnthropicClient{
-		APIKey: apiKey,
-		Model:  defaultModel,
+		Token:  token,
+		Model:  model,
+		APIURL: url,
 		http:   &http.Client{Timeout: 60 * time.Second},
 	}
 }
 
-// RunAgentLoop runs the full agentic tool-calling loop.
-//
-// It sends messages to Claude, handles tool_use blocks by calling tools and
-// feeding results back, and repeats until stop_reason=end_turn or maxIterations.
-//
-// onText is called with each text block as it arrives.
-// onToolCall is called just before each tool is invoked.
+// RunAgentLoop runs the full tool-calling agentic loop via the OpenAI-compatible API.
 func (c *AnthropicClient) RunAgentLoop(
 	ctx context.Context,
 	messages []AnthropicMessage,
@@ -92,45 +120,65 @@ func (c *AnthropicClient) RunAgentLoop(
 	onText func(text string),
 	onToolCall func(name string, input map[string]any),
 ) (string, error) {
-	var fullText string
-	msgs := make([]AnthropicMessage, len(messages))
-	copy(msgs, messages)
+	// Build OpenAI messages: system prompt first, then history.
+	oaiMsgs := []oaiMessage{{Role: "system", Content: systemPrompt}}
+	for _, m := range messages {
+		if s, ok := m.Content.(string); ok {
+			oaiMsgs = append(oaiMsgs, oaiMessage{Role: m.Role, Content: s})
+		}
+	}
 
+	// Convert tool definitions.
+	oaiTools := make([]oaiTool, 0, len(tools))
+	for _, t := range tools {
+		params := t.InputSchema
+		if params == nil {
+			params = map[string]any{"type": "object", "properties": map[string]any{}}
+		}
+		oaiTools = append(oaiTools, oaiTool{
+			Type: "function",
+			Function: oaiFunction{
+				Name:        t.Name,
+				Description: t.Description,
+				Parameters:  params,
+			},
+		})
+	}
+
+	var fullText string
 	for i := 0; i < maxIterations; i++ {
-		resp, err := c.callAPI(ctx, msgs, tools)
+		resp, err := c.callAPI(ctx, oaiMsgs, oaiTools)
 		if err != nil {
 			return fullText, err
 		}
+		if len(resp.Choices) == 0 {
+			break
+		}
+		choice := resp.Choices[0]
+		msg := choice.Message
 
-		for _, block := range resp.Content {
-			if block.Type == "text" && block.Text != "" {
-				fullText += block.Text
-				if onText != nil {
-					onText(block.Text)
-				}
+		if msg.Content != "" {
+			fullText += msg.Content
+			if onText != nil {
+				onText(msg.Content)
 			}
 		}
 
-		if resp.StopReason == "end_turn" || resp.StopReason == "" {
-			break
-		}
-		if resp.StopReason != "tool_use" {
+		if choice.FinishReason == "stop" || choice.FinishReason == "" || len(msg.ToolCalls) == 0 {
 			break
 		}
 
-		// Append Claude's full assistant turn (must include tool_use blocks for ID matching).
-		msgs = append(msgs, AnthropicMessage{Role: "assistant", Content: resp.Content})
+		// Append the assistant turn (with tool_calls) before sending tool results.
+		oaiMsgs = append(oaiMsgs, msg)
 
-		// Call each tool and collect results.
-		var resultBlocks []ContentBlock
-		for _, block := range resp.Content {
-			if block.Type != "tool_use" {
-				continue
-			}
+		// Call each tool and append its result.
+		for _, tc := range msg.ToolCalls {
+			var input map[string]any
+			_ = json.Unmarshal([]byte(tc.Function.Arguments), &input)
 			if onToolCall != nil {
-				onToolCall(block.Name, block.Input)
+				onToolCall(tc.Function.Name, input)
 			}
-			result, err := toolCaller(ctx, block.Name, block.Input)
+			result, err := toolCaller(ctx, tc.Function.Name, input)
 			var resultStr string
 			if err != nil {
 				resultStr = fmt.Sprintf(`{"error":%q}`, err.Error())
@@ -138,61 +186,55 @@ func (c *AnthropicClient) RunAgentLoop(
 				b, _ := json.Marshal(result)
 				resultStr = string(b)
 			}
-			resultBlocks = append(resultBlocks, ContentBlock{
-				Type:      "tool_result",
-				ToolUseID: block.ID,
-				Content:   resultStr,
+			oaiMsgs = append(oaiMsgs, oaiMessage{
+				Role:       "tool",
+				ToolCallID: tc.ID,
+				Content:    resultStr,
 			})
 		}
-
-		msgs = append(msgs, AnthropicMessage{Role: "user", Content: resultBlocks})
 	}
-
 	return fullText, nil
 }
 
-func (c *AnthropicClient) callAPI(ctx context.Context, msgs []AnthropicMessage, tools []AnthropicTool) (*apiResponse, error) {
-	body := apiRequest{
+func (c *AnthropicClient) callAPI(ctx context.Context, msgs []oaiMessage, tools []oaiTool) (*oaiResponse, error) {
+	body := oaiRequest{
 		Model:     c.Model,
 		MaxTokens: 4096,
-		System:    systemPrompt,
 		Messages:  msgs,
 		Tools:     tools,
 	}
-
+	if len(tools) == 0 {
+		body.Tools = nil
+	}
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, anthropicAPIURL, bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.APIURL, bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("x-api-key", c.APIKey)
-	req.Header.Set("anthropic-version", anthropicVersion)
-	req.Header.Set("content-type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("anthropic API: %w", err)
+		return nil, fmt.Errorf("LLM API: %w", err)
 	}
 	defer resp.Body.Close()
-
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("reading anthropic response: %w", err)
+		return nil, fmt.Errorf("reading LLM response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("anthropic API %d: %s", resp.StatusCode, string(raw))
+		return nil, fmt.Errorf("LLM API %d: %s", resp.StatusCode, string(raw))
 	}
-
-	var result apiResponse
+	var result oaiResponse
 	if err := json.Unmarshal(raw, &result); err != nil {
-		return nil, fmt.Errorf("decoding anthropic response: %w", err)
+		return nil, fmt.Errorf("decoding LLM response: %w", err)
 	}
 	if result.Error != nil {
-		return nil, fmt.Errorf("anthropic %s: %s", result.Error.Type, result.Error.Message)
+		return nil, fmt.Errorf("LLM %s: %s", result.Error.Type, result.Error.Message)
 	}
 	return &result, nil
 }
