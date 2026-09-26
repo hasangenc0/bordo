@@ -7,6 +7,9 @@ func NewBordoToolRegistry(cp *CPClient) *ToolRegistry {
 
 	r.Register(PingTool())
 
+	// Template catalog
+	r.Register(templateListTool(cp))
+
 	// Project tools
 	r.Register(projectCreateTool(cp))
 	r.Register(projectListTool(cp))
@@ -14,11 +17,13 @@ func NewBordoToolRegistry(cp *CPClient) *ToolRegistry {
 	r.Register(projectDeleteTool(cp))
 
 	// Build tools
+	r.Register(buildListTool(cp))
 	r.Register(buildTriggerTool(cp))
 	r.Register(buildStatusTool(cp))
 	r.Register(buildLogsTool(cp))
 
 	// Deploy / release tools
+	r.Register(deployListTool(cp))
 	r.Register(deployTool(cp))
 	r.Register(deployStatusTool(cp))
 	r.Register(rollbackTool(cp))
@@ -30,6 +35,9 @@ func NewBordoToolRegistry(cp *CPClient) *ToolRegistry {
 	// Region / fleet tools
 	r.Register(regionListTool(cp))
 	r.Register(regionAddTool(cp))
+
+	// GitHub integration
+	r.Register(githubCreateRepoTool(cp))
 
 	return r
 }

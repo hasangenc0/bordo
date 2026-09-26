@@ -5,6 +5,26 @@ import (
 	"fmt"
 )
 
+func deployListTool(cp *CPClient) *Tool {
+	return &Tool{
+		Name:        "deploy_list",
+		Description: "List recent deployments/releases, optionally filtered by project",
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"project_id": map[string]any{"type": "string", "description": "Filter by project UUID (optional)"},
+			},
+		},
+		CallFn: func(ctx context.Context, params map[string]any) (any, error) {
+			path := "/v1/releases"
+			if pid, ok := params["project_id"].(string); ok && pid != "" {
+				path += "?project_id=" + pid
+			}
+			return cp.Get(ctx, path)
+		},
+	}
+}
+
 func deployTool(cp *CPClient) *Tool {
 	return &Tool{
 		Name:        "deploy",

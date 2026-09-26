@@ -37,6 +37,7 @@ func New(db *sql.DB) *Handler {
 func NewHandler(db *sql.DB) http.Handler {
 	h := New(db)
 	r := chi.NewRouter()
+	r.Get("/", h.List)
 	r.Post("/", h.Create)
 	r.Get("/{id}", h.Get)
 	r.Post("/{id}/rollback", h.Rollback)
@@ -48,6 +49,42 @@ type createRequest struct {
 	ImageTag  string `json:"image_tag"`
 	Region    string `json:"region"`
 	Strategy  string `json:"strategy"`
+}
+
+func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
+	projectID := r.URL.Query().Get("project_id")
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	const qAll = `SELECT id, project_id, image_tag, region, strategy, status, created_at, updated_at
+	               FROM bordo_releases ORDER BY created_at DESC LIMIT 50`
+	const qByProject = `SELECT id, project_id, image_tag, region, strategy, status, created_at, updated_at
+	               FROM bordo_releases WHERE project_id = ? ORDER BY created_at DESC LIMIT 50`
+	if projectID != "" {
+		rows, err = h.db.QueryContext(r.Context(), qByProject, projectID)
+	} else {
+		rows, err = h.db.QueryContext(r.Context(), qAll)
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	releases := make([]Release, 0)
+	for rows.Next() {
+		var rel Release
+		var createdAt, updatedAt string
+		if err := rows.Scan(&rel.ID, &rel.ProjectID, &rel.ImageTag, &rel.Region, &rel.Strategy, &rel.Status,
+			&createdAt, &updatedAt); err != nil {
+			continue
+		}
+		rel.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		rel.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
+		releases = append(releases, rel)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"releases": releases})
 }
 
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {

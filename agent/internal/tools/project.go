@@ -5,6 +5,20 @@ import (
 	"fmt"
 )
 
+func templateListTool(cp *CPClient) *Tool {
+	return &Tool{
+		Name:        "template_list",
+		Description: "List all available golden-path project templates with their runtime and description",
+		Schema: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{},
+		},
+		CallFn: func(ctx context.Context, _ map[string]any) (any, error) {
+			return cp.Get(ctx, "/v1/templates")
+		},
+	}
+}
+
 func projectCreateTool(cp *CPClient) *Tool {
 	return &Tool{
 		Name:        "project_create",

@@ -116,6 +116,7 @@ func serveCmd() *cobra.Command {
 			}
 
 			srv := server.New(cfg, logger, db)
+			srv.StartController(ctx)
 			return srv.Start(ctx)
 		},
 	}

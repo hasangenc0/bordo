@@ -26,12 +26,13 @@ import (
 
 // Server is the bordod HTTP API server.
 type Server struct {
-	cfg       *config.Config
-	logger    *slog.Logger
-	router    *chi.Mux
-	db        *sql.DB
-	http      *http.Server
-	secretKey [32]byte
+	cfg               *config.Config
+	logger            *slog.Logger
+	router            *chi.Mux
+	db                *sql.DB
+	http              *http.Server
+	secretKey         [32]byte
+	releaseController *release.Controller
 }
 
 // New creates a Server wired with all routes.
@@ -42,11 +43,12 @@ func New(cfg *config.Config, logger *slog.Logger, db *sql.DB) *Server {
 		logger.Warn("secrets: could not derive encryption key, secrets disabled", "error", err)
 	}
 	s := &Server{
-		cfg:       cfg,
-		logger:    logger,
-		db:        db,
-		router:    chi.NewRouter(),
-		secretKey: secretKey,
+		cfg:               cfg,
+		logger:            logger,
+		db:                db,
+		router:            chi.NewRouter(),
+		secretKey:         secretKey,
+		releaseController: release.NewController(db, logger),
 	}
 	s.registerMiddleware()
 	s.registerRoutes()
@@ -93,6 +95,15 @@ func (s *Server) Addr() string {
 	return s.http.Addr
 }
 
+// StartController starts the release controller in a goroutine.
+func (s *Server) StartController(ctx context.Context) {
+	go func() {
+		if err := s.releaseController.Start(ctx); err != nil {
+			s.logger.Error("release controller stopped", "err", err)
+		}
+	}()
+}
+
 // registerMiddleware adds global middleware to the router.
 func (s *Server) registerMiddleware() {
 	s.router.Use(middleware.RequestID)
@@ -128,6 +139,8 @@ func (s *Server) registerRoutes() {
 		r.Get("/observe/metrics", observeHandler.QueryMetrics)
 		r.Get("/observe/logs", observeHandler.QueryLogs)
 		r.Get("/observe/traces/{traceID}", observeHandler.QueryTrace)
+
+		r.Get("/templates", s.handleListTemplates)
 	})
 }
 
@@ -152,6 +165,26 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		"commit":    version.Commit,
 		"buildTime": version.BuildTime,
 	})
+}
+
+type templateInfo struct {
+	Name        string `json:"name"`
+	Runtime     string `json:"runtime"`
+	Description string `json:"description"`
+}
+
+var builtinTemplates = []templateInfo{
+	{"java-web-service", "java", "Spring Boot 3 REST service with OpenTelemetry and health actuator"},
+	{"java-worker", "java", "Spring Boot background worker using the bordo-worker SDK"},
+	{"java-kafka", "java", "Spring Boot Kafka consumer/producer using the bordo-kafka SDK"},
+	{"java-job", "java", "Spring Boot scheduled/one-shot job with distributed lock via bordo-job SDK"},
+	{"java-data-layer", "java", "HikariCP + Flyway data-access layer using the bordo-data SDK"},
+	{"ts-react-app", "typescript", "Vite + React + TypeScript frontend with OpenTelemetry browser instrumentation"},
+	{"node-bff", "node", "Fastify + TypeScript BFF (backend-for-frontend) with pino logging and OpenTelemetry"},
+}
+
+func (s *Server) handleListTemplates(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"templates": builtinTemplates})
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

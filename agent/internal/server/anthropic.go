@@ -12,9 +12,8 @@ import (
 )
 
 const (
-	defaultLLMURL      = "https://api.cloudflare.com/client/v4/accounts/5ef26bd0b28e4de5cd395bf98f4a843d/ai/run"
-	defaultLLMModel    = "deepseek-v4-flash"
-	defaultDeepSeekURL = "https://api.deepseek.com/v1/chat/completions"
+	defaultLLMURL = "https://api.deepseek.com/chat/completions"
+	defaultLLMModel    = "deepseek-chat"
 	maxIterations      = 10
 	systemPrompt       = "You are the Bordo platform assistant. You help users manage their software factory: create projects, trigger builds, deploy services, and query observability data. Use the available tools to take actions on behalf of the user."
 )
@@ -63,7 +62,6 @@ type oaiFuncCall struct {
 }
 
 type oaiRequest struct {
-	URL       string       `json:"url,omitempty"` // target provider URL forwarded by CF /ai/run
 	Model     string       `json:"model"`
 	MaxTokens int          `json:"max_tokens"`
 	Messages  []oaiMessage `json:"messages"`
@@ -81,23 +79,21 @@ type oaiResponse struct {
 	} `json:"error"`
 }
 
-// AnthropicClient wraps the Cloudflare AI Gateway /ai/run endpoint.
+// AnthropicClient calls any OpenAI-compatible chat completions endpoint.
 // The name is kept for backward compatibility with server.go.
 type AnthropicClient struct {
-	Token      string
-	Model      string
-	APIURL     string // CF /ai/run endpoint
-	ProviderURL string // target provider URL passed in request body (DeepSeek)
-	http       *http.Client
+	Token  string
+	Model  string
+	APIURL string
+	http   *http.Client
 }
 
 // NewAnthropicClient creates a client.
-// CF_API_TOKEN    — Cloudflare API token (required)
-// BORDO_LLM_MODEL — model name (default: deepseek-ai/DeepSeek-V4.1-Flash)
-// BORDO_LLM_URL   — CF /ai/run endpoint override
-// DEEPSEEK_URL    — DeepSeek completion URL forwarded in request body
+// DEEPSEEK_API_KEY — API key for the LLM provider (required)
+// BORDO_LLM_MODEL  — model name override (default: deepseek-chat)
+// BORDO_LLM_URL    — completions endpoint override (default: https://api.deepseek.com/chat/completions)
 func NewAnthropicClient(apiKey string) *AnthropicClient {
-	token := os.Getenv("CF_API_TOKEN")
+	token := os.Getenv("DEEPSEEK_API_KEY")
 	if token == "" {
 		token = apiKey
 	}
@@ -105,20 +101,15 @@ func NewAnthropicClient(apiKey string) *AnthropicClient {
 	if model == "" {
 		model = defaultLLMModel
 	}
-	cfURL := os.Getenv("BORDO_LLM_URL")
-	if cfURL == "" {
-		cfURL = defaultLLMURL
-	}
-	providerURL := os.Getenv("DEEPSEEK_URL")
-	if providerURL == "" {
-		providerURL = defaultDeepSeekURL
+	apiURL := os.Getenv("BORDO_LLM_URL")
+	if apiURL == "" {
+		apiURL = defaultLLMURL
 	}
 	return &AnthropicClient{
-		Token:       token,
-		Model:       model,
-		APIURL:      cfURL,
-		ProviderURL: providerURL,
-		http:        &http.Client{Timeout: 60 * time.Second},
+		Token:  token,
+		Model:  model,
+		APIURL: apiURL,
+		http:   &http.Client{Timeout: 60 * time.Second},
 	}
 }
 
@@ -209,7 +200,6 @@ func (c *AnthropicClient) RunAgentLoop(
 
 func (c *AnthropicClient) callAPI(ctx context.Context, msgs []oaiMessage, tools []oaiTool) (*oaiResponse, error) {
 	body := oaiRequest{
-		URL:       c.ProviderURL,
 		Model:     c.Model,
 		MaxTokens: 4096,
 		Messages:  msgs,

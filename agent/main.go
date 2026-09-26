@@ -33,6 +33,9 @@ func rootCmd() *cobra.Command {
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if apiKey == "" {
+				apiKey = os.Getenv("DEEPSEEK_API_KEY")
+			}
+			if apiKey == "" {
 				apiKey = os.Getenv("ANTHROPIC_API_KEY")
 			}
 			if apiKey == "" {
@@ -51,7 +54,7 @@ func rootCmd() *cobra.Command {
 	}
 
 	cmd.Flags().IntVar(&port, "port", 7402, "HTTP port")
-	cmd.Flags().StringVar(&apiKey, "api-key", "", "Anthropic API key (or set ANTHROPIC_API_KEY)")
+	cmd.Flags().StringVar(&apiKey, "api-key", "", "LLM API key (or set DEEPSEEK_API_KEY)")
 	cmd.Flags().StringVar(&logLevel, "log-level", "info", "log level: debug|info|warn|error")
 	return cmd
 }
