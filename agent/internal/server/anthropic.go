@@ -13,7 +13,7 @@ import (
 
 const (
 	defaultLLMURL      = "https://api.cloudflare.com/client/v4/accounts/5ef26bd0b28e4de5cd395bf98f4a843d/ai/run"
-	defaultLLMModel    = "deepseek-ai/DeepSeek-V4.1-Flash"
+	defaultLLMModel    = "deepseek-v4-flash"
 	defaultDeepSeekURL = "https://api.deepseek.com/v1/chat/completions"
 	maxIterations      = 10
 	systemPrompt       = "You are the Bordo platform assistant. You help users manage their software factory: create projects, trigger builds, deploy services, and query observability data. Use the available tools to take actions on behalf of the user."
