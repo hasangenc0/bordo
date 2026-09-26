@@ -1,0 +1,31 @@
+#!/bin/sh
+# Maven Wrapper script
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.
+
+if [ -z "$JAVA_HOME" ] ; then
+  JAVACMD=`which java`
+else
+  JAVACMD="$JAVA_HOME/bin/java"
+fi
+
+if [ ! -x "$JAVACMD" ] ; then
+  echo "Error: JAVA_HOME is not defined correctly." >&2
+  echo "  We cannot execute $JAVACMD" >&2
+  exit 1
+fi
+
+MAVEN_PROJECTBASEDIR="${MAVEN_BASEDIR:-$(pwd)}"
+MAVEN_WRAPPER_JAR="$MAVEN_PROJECTBASEDIR/.mvn/wrapper/maven-wrapper.jar"
+
+if [ -r "$MAVEN_WRAPPER_JAR" ]; then
+  exec "$JAVACMD" \
+    $MAVEN_OPTS \
+    $MAVEN_DEBUG_OPTS \
+    -jar "$MAVEN_WRAPPER_JAR" \
+    "$@"
+else
+  echo "Error: Maven wrapper JAR not found at $MAVEN_WRAPPER_JAR" >&2
+  echo "Please run: mvn wrapper:wrapper" >&2
+  exit 1
+fi

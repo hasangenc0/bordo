@@ -1,0 +1,22 @@
+spring:
+  application:
+    name: {{.ProjectName}}
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  tracing:
+    sampling:
+      probability: 1.0
+
+logging:
+  pattern:
+    console: "%d{ISO8601} %highlight(%-5level) [%thread] %logger{36} - %msg%n"

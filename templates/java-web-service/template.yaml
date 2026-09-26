@@ -1,0 +1,22 @@
+name: java-web-service
+description: Java Spring Boot HTTP API with OTel, actuator health, and structured logging
+language: java
+runtime: web-service
+variables:
+  - name: ProjectName
+    prompt: "Project name (kebab-case, e.g. my-api)"
+    required: true
+  - name: GroupId
+    prompt: "Maven group ID (e.g. com.example)"
+    default: "com.example"
+    required: false
+build:
+  dockerfile: Dockerfile
+  context: .
+health:
+  path: /actuator/health
+  port: 8080
+observability:
+  metrics: true
+  logs: true
+  traces: true

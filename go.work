@@ -1,7 +1,10 @@
 go 1.22
 
 use (
+	./agent
+	./build
 	./cli
 	./control-plane
 	./fleet
+	./scripts
 )

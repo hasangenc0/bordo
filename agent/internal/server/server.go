@@ -1,0 +1,198 @@
+// Package server implements the bordo-agent HTTP server.
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/gorilla/websocket"
+)
+
+// Config holds agent server configuration.
+type Config struct {
+	Port     int
+	APIKey   string
+	LogLevel string
+}
+
+// Server is the bordo-agent HTTP server.
+type Server struct {
+	cfg      Config
+	logger   *slog.Logger
+	router   *chi.Mux
+	http     *http.Server
+	sessions *SessionStore
+	tools    *ToolRegistry
+	upgrader websocket.Upgrader
+}
+
+// Run creates and starts the server, blocking until ctx is cancelled.
+func Run(ctx context.Context, cfg Config) error {
+	if cfg.Port == 0 {
+		cfg.Port = 7402
+	}
+	s := &Server{
+		cfg:      cfg,
+		logger:   newLogger(cfg.LogLevel),
+		router:   chi.NewRouter(),
+		sessions: NewSessionStore(),
+		tools:    NewToolRegistry(),
+		upgrader: websocket.Upgrader{
+			CheckOrigin: func(r *http.Request) bool { return true },
+		},
+	}
+
+	s.tools.Register(PingTool())
+
+	s.router.Use(middleware.RequestID)
+	s.router.Use(middleware.Recoverer)
+
+	s.router.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+	s.router.Get("/ws/chat", s.handleChat)
+	s.router.Get("/sessions", s.handleListSessions)
+	s.router.Post("/mcp", s.handleMCP)
+
+	s.http = &http.Server{
+		Addr:              fmt.Sprintf(":%d", cfg.Port),
+		Handler:           s.router,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	ln, err := net.Listen("tcp", s.http.Addr)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", s.http.Addr, err)
+	}
+	s.logger.Info("bordo-agent listening", "addr", s.http.Addr)
+
+	errCh := make(chan error, 1)
+	go func() {
+		if err := s.http.Serve(ln); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+		}
+		close(errCh)
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		s.logger.Info("bordo-agent shutting down")
+		shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return s.http.Shutdown(shutCtx)
+	}
+}
+
+func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
+	sessionID := middleware.GetReqID(r.Context())
+	conn, err := s.upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		s.logger.Warn("websocket upgrade failed", "error", err)
+		return
+	}
+	defer conn.Close()
+
+	session := s.sessions.Create(sessionID)
+	s.logger.Info("chat session started", "session_id", sessionID)
+	defer s.logger.Info("chat session ended", "session_id", sessionID)
+
+	for {
+		_, msg, err := conn.ReadMessage()
+		if err != nil {
+			break
+		}
+
+		var req ChatMessage
+		if err := json.Unmarshal(msg, &req); err != nil {
+			writeWSError(conn, "invalid message format")
+			continue
+		}
+
+		session.AddMessage("user", req.Content)
+
+		reply, err := s.chat(r.Context(), session, req.Content)
+		if err != nil {
+			writeWSError(conn, "model error: "+err.Error())
+			continue
+		}
+
+		session.AddMessage("assistant", reply)
+
+		resp, _ := json.Marshal(ChatMessage{Role: "assistant", Content: reply})
+		if err := conn.WriteMessage(websocket.TextMessage, resp); err != nil {
+			break
+		}
+	}
+}
+
+func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"sessions": s.sessions.List(),
+	})
+}
+
+func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
+	var req MCPRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, MCPResponse{Error: "invalid request"})
+		return
+	}
+
+	tool := s.tools.Get(req.Tool)
+	if tool == nil {
+		writeJSON(w, http.StatusNotFound, MCPResponse{Error: "tool not found: " + req.Tool})
+		return
+	}
+
+	result, err := tool.Call(r.Context(), req.Params)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, MCPResponse{Error: err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, MCPResponse{Result: result})
+}
+
+// chat invokes the model provider. Falls back to a canned reply if no API key is set.
+func (s *Server) chat(ctx context.Context, session *Session, userMsg string) (string, error) {
+	if s.cfg.APIKey == "" {
+		return fmt.Sprintf("(no model provider configured — received: %q)", userMsg), nil
+	}
+	return callAnthropic(ctx, s.cfg.APIKey, session.Messages(), userMsg)
+}
+
+func newLogger(level string) *slog.Logger {
+	var lvl slog.Level
+	switch level {
+	case "debug":
+		lvl = slog.LevelDebug
+	case "warn":
+		lvl = slog.LevelWarn
+	case "error":
+		lvl = slog.LevelError
+	default:
+		lvl = slog.LevelInfo
+	}
+	return slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: lvl}))
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeWSError(conn *websocket.Conn, msg string) {
+	b, _ := json.Marshal(map[string]string{"error": msg})
+	_ = conn.WriteMessage(websocket.TextMessage, b)
+}
