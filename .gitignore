@@ -13,7 +13,6 @@ bordo
 *.test
 *.out
 vendor/
-go.sum
 
 # Build artifacts
 /build-out/
@@ -47,14 +46,16 @@ node_modules/
 dist/
 coverage/
 
-# Java
+# Java (Gradle/Maven output dirs — avoid matching Go's build/ module)
 target/
 *.class
 *.jar
 *.war
 *.ear
 .gradle/
-build/
+# Match build/ only inside SDK/template subdirectories, not the root Go module
+sdk/**/build/
+templates/**/build/
 
 # k3s / kubeconfig
 kubeconfig.yaml
