@@ -1,0 +1,61 @@
+# Binaries
+bordod
+bordo
+/bin/
+/dist/
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+go.sum
+
+# Build artifacts
+/build-out/
+*.tar.gz
+*.zip
+
+# Editor / OS
+.DS_Store
+.idea/
+*.swp
+*.swo
+.vscode/settings.json
+.vscode/launch.json
+
+# Runtime / secrets
+*.env
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local dev overrides
+bordo.local.yaml
+bordod.local.yaml
+
+# Node
+node_modules/
+.next/
+.nuxt/
+dist/
+coverage/
+
+# Java
+target/
+*.class
+*.jar
+*.war
+*.ear
+.gradle/
+build/
+
+# k3s / kubeconfig
+kubeconfig.yaml
+*.kubeconfig
