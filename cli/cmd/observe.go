@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -19,7 +20,7 @@ func ObserveCmd() *cobra.Command {
 }
 
 func observeMetricsCmd() *cobra.Command {
-	var project, metric string
+	var project, metric, region string
 	cmd := &cobra.Command{
 		Use:   "metrics",
 		Short: "Query metrics (PromQL) for a project",
@@ -32,7 +33,11 @@ func observeMetricsCmd() *cobra.Command {
 			if project != "" {
 				q = fmt.Sprintf(`{project="%s",%s}`, project, metric)
 			}
-			body, err := c.GetRaw(cmd.Context(), "/v1/observe/metrics?query="+q)
+			path := "/v1/observe/metrics?query=" + url.QueryEscape(q)
+			if region != "" {
+				path += "&region=" + url.QueryEscape(region)
+			}
+			body, err := c.GetRaw(cmd.Context(), path)
 			if err != nil {
 				return err
 			}
@@ -41,12 +46,13 @@ func observeMetricsCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&project, "project", "", "Project ID to scope the query")
 	cmd.Flags().StringVar(&metric, "metric", "", "PromQL expression (required)")
+	cmd.Flags().StringVar(&region, "region", "", "Region name to query (default: all regions)")
 	_ = cmd.MarkFlagRequired("metric")
 	return cmd
 }
 
 func observeLogsCmd() *cobra.Command {
-	var project, query, last string
+	var project, query, last, region string
 	cmd := &cobra.Command{
 		Use:   "logs",
 		Short: "Query logs (LogQL) for a project",
@@ -66,7 +72,10 @@ func observeLogsCmd() *cobra.Command {
 			now := time.Now()
 			start := now.Add(-dur)
 			path := fmt.Sprintf("/v1/observe/logs?query=%s&start=%d&end=%d",
-				logql, start.UnixNano(), now.UnixNano())
+				url.QueryEscape(logql), start.UnixNano(), now.UnixNano())
+			if region != "" {
+				path += "&region=" + url.QueryEscape(region)
+			}
 			body, err := c.GetRaw(cmd.Context(), path)
 			if err != nil {
 				return err
@@ -77,11 +86,12 @@ func observeLogsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&project, "project", "", "Project ID to scope the query")
 	cmd.Flags().StringVar(&query, "query", "", "LogQL expression (overrides --project default)")
 	cmd.Flags().StringVar(&last, "last", "1h", "Look back duration (e.g. 30m, 1h, 24h)")
+	cmd.Flags().StringVar(&region, "region", "", "Region name to query (default: all regions)")
 	return cmd
 }
 
 func observeTracesCmd() *cobra.Command {
-	var traceID string
+	var traceID, region string
 	cmd := &cobra.Command{
 		Use:   "traces",
 		Short: "Fetch a trace by ID",
@@ -90,7 +100,11 @@ func observeTracesCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			body, err := c.GetRaw(cmd.Context(), "/v1/observe/traces/"+traceID)
+			path := "/v1/observe/traces/" + traceID
+			if region != "" {
+				path += "?region=" + url.QueryEscape(region)
+			}
+			body, err := c.GetRaw(cmd.Context(), path)
 			if err != nil {
 				return err
 			}
@@ -98,6 +112,7 @@ func observeTracesCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&traceID, "trace-id", "", "Trace ID to fetch (required)")
+	cmd.Flags().StringVar(&region, "region", "", "Region name to query (default: all regions, first match)")
 	_ = cmd.MarkFlagRequired("trace-id")
 	return cmd
 }

@@ -2,45 +2,56 @@
 package observe
 
 import (
-	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 )
 
 // BackendConfig holds URLs for the observe backends, read from env at startup.
+// Kept for backwards-compat; multi-region path uses LoadBackends instead.
 type BackendConfig struct {
 	VictoriaMetricsURL string
 	LokiURL            string
 	TempoURL           string
 }
 
-// Handler is a chi-compatible HTTP handler for observe queries.
+// Handler is a chi-compatible HTTP handler for the unified observe facade.
 type Handler struct {
-	cfg  BackendConfig
-	http *http.Client
+	db     *sql.DB
+	client *MultiClient
 }
 
-// NewHandler creates a Handler.
-func NewHandler(cfg BackendConfig) *Handler {
+// NewHandler creates a Handler backed by the DB-loaded (multi-region) MultiClient.
+func NewHandler(db *sql.DB) *Handler {
+	backends, _ := LoadBackends(db)
 	return &Handler{
-		cfg:  cfg,
-		http: &http.Client{Timeout: 30 * time.Second},
+		db:     db,
+		client: NewMultiClient(backends),
 	}
 }
 
-// QueryMetrics handles GET /v1/observe/metrics?query=<promql>
+// newHandlerFromConfig creates a Handler from an explicit BackendConfig (test / legacy path).
+func newHandlerFromConfig(cfg BackendConfig) *Handler {
+	backends := []RegionBackend{}
+	if cfg.VictoriaMetricsURL != "" || cfg.LokiURL != "" || cfg.TempoURL != "" {
+		backends = []RegionBackend{{
+			Region:   "default",
+			VMURL:    cfg.VictoriaMetricsURL,
+			LokiURL:  cfg.LokiURL,
+			TempoURL: cfg.TempoURL,
+		}}
+	}
+	return &Handler{client: NewMultiClient(backends)}
+}
+
+// QueryMetrics handles GET /v1/observe/metrics?query=<promql>&region=<optional>
 func (h *Handler) QueryMetrics(w http.ResponseWriter, r *http.Request) {
-	if h.cfg.VictoriaMetricsURL == "" {
-		writeJSON(w, http.StatusOK, map[string]string{
-			"status":  "backends_not_configured",
-			"message": "Set BORDO_VM_URL to enable metrics queries",
-		})
+	if len(h.client.backends) == 0 {
+		writeJSON(w, http.StatusOK, notConfigured("metrics"))
 		return
 	}
 	promql := r.URL.Query().Get("query")
@@ -48,17 +59,19 @@ func (h *Handler) QueryMetrics(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "query parameter required"})
 		return
 	}
-	params := url.Values{"query": {promql}, "time": {fmt.Sprintf("%d", time.Now().Unix())}}
-	h.proxy(r.Context(), w, h.cfg.VictoriaMetricsURL+"/api/v1/query?"+params.Encode())
+	region := r.URL.Query().Get("region")
+	results, err := h.client.QueryMetrics(r.Context(), promql, region)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, results)
 }
 
-// QueryLogs handles GET /v1/observe/logs?query=<logql>&start=<>&end=<>
+// QueryLogs handles GET /v1/observe/logs?query=<logql>&start=<>&end=<>&region=<optional>
 func (h *Handler) QueryLogs(w http.ResponseWriter, r *http.Request) {
-	if h.cfg.LokiURL == "" {
-		writeJSON(w, http.StatusOK, map[string]string{
-			"status":  "backends_not_configured",
-			"message": "Set BORDO_LOKI_URL to enable log queries",
-		})
+	if len(h.client.backends) == 0 {
+		writeJSON(w, http.StatusOK, notConfigured("logs"))
 		return
 	}
 	q := r.URL.Query()
@@ -67,25 +80,31 @@ func (h *Handler) QueryLogs(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "query parameter required"})
 		return
 	}
-	start := q.Get("start")
-	end := q.Get("end")
-	if start == "" {
-		start = fmt.Sprintf("%d", time.Now().Add(-1*time.Hour).UnixNano())
+	now := time.Now()
+	start, end := now.Add(-1*time.Hour), now
+	if s := q.Get("start"); s != "" {
+		if ns, err := parseTime(s); err == nil {
+			start = ns
+		}
 	}
-	if end == "" {
-		end = fmt.Sprintf("%d", time.Now().UnixNano())
+	if e := q.Get("end"); e != "" {
+		if ns, err := parseTime(e); err == nil {
+			end = ns
+		}
 	}
-	params := url.Values{"query": {logql}, "start": {start}, "end": {end}, "limit": {"100"}}
-	h.proxy(r.Context(), w, h.cfg.LokiURL+"/loki/api/v1/query_range?"+params.Encode())
+	region := q.Get("region")
+	results, err := h.client.QueryLogs(r.Context(), logql, region, start, end)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, results)
 }
 
-// QueryTrace handles GET /v1/observe/traces/{traceID}
+// QueryTrace handles GET /v1/observe/traces/{traceID}?region=<optional>
 func (h *Handler) QueryTrace(w http.ResponseWriter, r *http.Request) {
-	if h.cfg.TempoURL == "" {
-		writeJSON(w, http.StatusOK, map[string]string{
-			"status":  "backends_not_configured",
-			"message": "Set BORDO_TEMPO_URL to enable trace queries",
-		})
+	if len(h.client.backends) == 0 {
+		writeJSON(w, http.StatusOK, notConfigured("traces"))
 		return
 	}
 	traceID := chi.URLParam(r, "traceID")
@@ -93,29 +112,32 @@ func (h *Handler) QueryTrace(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "traceID required"})
 		return
 	}
-	h.proxy(r.Context(), w, h.cfg.TempoURL+"/api/traces/"+traceID)
-}
-
-// proxy forwards a GET request to upstream and streams the response body.
-func (h *Handler) proxy(ctx context.Context, w http.ResponseWriter, upstream string) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, upstream, nil)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	resp, err := h.http.Do(req)
+	region := r.URL.Query().Get("region")
+	data, err := h.client.QueryTrace(r.Context(), traceID, region)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
-	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
 
-	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
-	if w.Header().Get("Content-Type") == "" {
-		w.Header().Set("Content-Type", "application/json")
+func notConfigured(kind string) map[string]string {
+	return map[string]string{
+		"status":  "backends_not_configured",
+		"message": fmt.Sprintf("Set vm_url/loki_url/tempo_url on your regions, or BORDO_VM_URL/BORDO_LOKI_URL/BORDO_TEMPO_URL env vars to enable %s queries", kind),
 	}
-	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
+}
+
+// parseTime parses a Unix nanosecond timestamp string.
+func parseTime(s string) (time.Time, error) {
+	var ns int64
+	_, err := fmt.Sscanf(s, "%d", &ns)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return time.Unix(0, ns), nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

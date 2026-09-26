@@ -1,0 +1,170 @@
+openapi: "3.0.3"
+info:
+  title: Bordo Release API
+  version: "1.0"
+  description: >
+    Manage releases (deployments) of Bordo-built container images to regional clusters.
+    Supports rolling, canary, and blue-green delivery strategies.
+
+servers:
+  - url: http://localhost:7401
+    description: Local control-plane
+
+paths:
+  /v1/releases:
+    post:
+      summary: Create a new release
+      operationId: createRelease
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateReleaseRequest"
+      responses:
+        "201":
+          description: Release created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Release"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/releases/{id}:
+    get:
+      summary: Get a release by ID
+      operationId: getRelease
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Release found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Release"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/releases/{id}/rollback:
+    post:
+      summary: Roll back a release
+      operationId: rollbackRelease
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Rollback initiated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  status:
+                    type: string
+                    example: rolling_back
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  schemas:
+    CreateReleaseRequest:
+      type: object
+      required: [project_id, image_tag, region]
+      properties:
+        project_id:
+          type: string
+          format: uuid
+          description: ID of the project to deploy.
+        image_tag:
+          type: string
+          example: "registry.example.com/my-service:abc123"
+          description: Fully-qualified OCI image reference.
+        region:
+          type: string
+          example: us-east
+          description: Target region name. Use "all" for a sequential multi-region rollout.
+        strategy:
+          type: string
+          enum: [rolling, canary, blue-green]
+          default: rolling
+          description: >
+            Delivery strategy.
+            - **rolling**: default Kubernetes rolling update.
+            - **canary**: traffic is shifted gradually in steps (10%, 25%, 50%, 100%).
+              Optionally gates each step on error-rate analysis against VictoriaMetrics.
+            - **blue-green**: deploys to the inactive slot, then switches the Service selector
+              for an instant cutover with easy rollback.
+
+    Release:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        image_tag:
+          type: string
+        region:
+          type: string
+        strategy:
+          type: string
+          enum: [rolling, canary, blue-green]
+        status:
+          type: string
+          enum: [pending, reconciling, healthy, failed, rolling_back]
+        metadata:
+          type: object
+          description: Strategy-specific metadata (e.g. canary steps, active color).
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+  responses:
+    BadRequest:
+      description: Invalid request body or missing required fields
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string

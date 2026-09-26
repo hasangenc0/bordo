@@ -1,0 +1,131 @@
+openapi: "3.0.3"
+info:
+  title: Bordo Observe API
+  version: "1.0"
+  description: |
+    Unified observe query facade — proxies PromQL/LogQL/trace queries to the
+    correct regional VictoriaMetrics / Loki / Tempo backend.
+    Omit the `region` parameter to fan out to all regions and receive a
+    map of region → result.
+
+servers:
+  - url: http://localhost:7401
+    description: Local control plane
+
+paths:
+  /v1/observe/metrics:
+    get:
+      summary: Query metrics (PromQL)
+      operationId: queryMetrics
+      parameters:
+        - name: query
+          in: query
+          required: true
+          description: PromQL expression
+          schema:
+            type: string
+            example: http_requests_total
+        - name: region
+          in: query
+          required: false
+          description: Region name. Omit to query all regions.
+          schema:
+            type: string
+            example: us-east
+      responses:
+        "200":
+          description: |
+            Metrics results keyed by region name.
+            Each value is the raw VictoriaMetrics instant-query response.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+              example:
+                us-east:
+                  status: success
+                  data:
+                    resultType: vector
+                    result: []
+        "400":
+          description: Missing or invalid query parameter
+        "502":
+          description: Backend unreachable
+
+  /v1/observe/logs:
+    get:
+      summary: Query logs (LogQL)
+      operationId: queryLogs
+      parameters:
+        - name: query
+          in: query
+          required: true
+          description: LogQL stream selector and pipeline
+          schema:
+            type: string
+            example: '{project="my-service"}'
+        - name: start
+          in: query
+          required: false
+          description: Start time as Unix nanoseconds (default -1h)
+          schema:
+            type: integer
+            format: int64
+        - name: end
+          in: query
+          required: false
+          description: End time as Unix nanoseconds (default now)
+          schema:
+            type: integer
+            format: int64
+        - name: region
+          in: query
+          required: false
+          description: Region name. Omit to query all regions.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Log query results keyed by region name
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+        "400":
+          description: Missing query parameter
+        "502":
+          description: Backend unreachable
+
+  /v1/observe/traces/{traceID}:
+    get:
+      summary: Fetch a trace by ID
+      operationId: queryTrace
+      parameters:
+        - name: traceID
+          in: path
+          required: true
+          description: Trace ID (hex string)
+          schema:
+            type: string
+            example: 4bf92f3577b34da6a3ce929d0e0e4736
+        - name: region
+          in: query
+          required: false
+          description: Region to query. Omit to search all regions (returns first match).
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Tempo trace response, or {"status":"not_found"} if absent
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Missing traceID
+        "502":
+          description: Backend unreachable

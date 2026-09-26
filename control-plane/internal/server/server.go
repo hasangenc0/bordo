@@ -11,8 +11,6 @@ import (
 	"net/http"
 	"time"
 
-	"os"
-
 	"github.com/bordo-io/bordo/control-plane/internal/buildorchestrator"
 	"github.com/bordo-io/bordo/control-plane/internal/config"
 	"github.com/bordo-io/bordo/control-plane/internal/fleet"
@@ -124,11 +122,7 @@ func (s *Server) registerRoutes() {
 			r.Delete("/{key}", secretsHandler.Delete)
 		})
 
-		observeHandler := observe.NewHandler(observe.BackendConfig{
-			VictoriaMetricsURL: os.Getenv("BORDO_VM_URL"),
-			LokiURL:            os.Getenv("BORDO_LOKI_URL"),
-			TempoURL:           os.Getenv("BORDO_TEMPO_URL"),
-		})
+		observeHandler := observe.NewHandler(s.db)
 		r.Get("/observe/metrics", observeHandler.QueryMetrics)
 		r.Get("/observe/logs", observeHandler.QueryLogs)
 		r.Get("/observe/traces/{traceID}", observeHandler.QueryTrace)
