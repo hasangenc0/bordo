@@ -1,19 +1,39 @@
-# Template: java-worker
+# java-worker
 
-**Language**: Java 21  
-**Runtime**: Background worker  
-**Issue**: BRD-060
+Golden-path template for a Bordo worker service built on `bordo-worker`.
 
-## What this template produces
+## What you get
 
-A Java background worker application with:
-- Message queue integration (configurable: SQS, RabbitMQ, custom)
-- Retry logic with exponential backoff
-- Dead-letter queue (DLQ) support
-- Structured JSON logging
-- OpenTelemetry auto-instrumentation
-- Dockerfile (multi-stage)
+- `BordoWorker<T>` base class — retry logic (3 attempts, exponential backoff), DLQ routing, OTel span per message
+- Spring Boot Actuator health endpoint at `/actuator/health`
+- Prometheus metrics at `/actuator/prometheus`
+- OTel tracing via `opentelemetry-spring-boot-starter`
 
-## Status
+## Scaffold
 
-🚧 Template files not yet created — see **BRD-060** (Java app framework epic).
+```bash
+bordo project create --template java-worker \
+  --var ProjectName=invoice-processor \
+  --var GroupId=com.acme \
+  --var QueueName=invoices
+```
+
+## Run locally
+
+```bash
+./mvnw spring-boot:run
+```
+
+## Build image
+
+```bash
+bordo build --project invoice-processor
+```
+
+## Template variables
+
+| Variable      | Description                  | Default       |
+|---------------|------------------------------|---------------|
+| `ProjectName` | App name (kebab-case)        | `my-worker`   |
+| `GroupId`     | Java package / Maven groupId | `com.example` |
+| `QueueName`   | Queue this worker consumes   | `tasks`       |

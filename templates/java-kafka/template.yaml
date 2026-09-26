@@ -1,0 +1,23 @@
+name: java-kafka
+description: Spring Boot Kafka consumer/producer using bordo-kafka SDK
+runtime: java
+version: "1.0"
+
+variables:
+  - name: ProjectName
+    description: Application name (kebab-case)
+    default: my-kafka-service
+  - name: GroupId
+    description: Java package / Maven groupId
+    default: com.example
+  - name: KafkaTopic
+    description: Primary Kafka topic to consume/produce
+    default: events
+
+health:
+  path: /actuator/health
+  port: 8082
+
+otel:
+  enabled: true
+  service_name: "{{.ProjectName}}"

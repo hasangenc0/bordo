@@ -1,0 +1,23 @@
+name: java-job
+description: Spring Boot scheduled job using bordo-job SDK with distributed locking
+runtime: java
+version: "1.0"
+
+variables:
+  - name: ProjectName
+    description: Application name (kebab-case)
+    default: my-job
+  - name: GroupId
+    description: Java package / Maven groupId
+    default: com.example
+  - name: CronExpression
+    description: Spring cron expression for the job schedule
+    default: "0 * * * * *"
+
+health:
+  path: /actuator/health
+  port: 8083
+
+otel:
+  enabled: true
+  service_name: "{{.ProjectName}}"

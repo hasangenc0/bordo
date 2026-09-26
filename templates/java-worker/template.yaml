@@ -1,0 +1,23 @@
+name: java-worker
+description: Spring Boot worker service using bordo-worker SDK
+runtime: java
+version: "1.0"
+
+variables:
+  - name: ProjectName
+    description: Application name (kebab-case)
+    default: my-worker
+  - name: GroupId
+    description: Java package / Maven groupId
+    default: com.example
+  - name: QueueName
+    description: Name of the queue this worker consumes
+    default: tasks
+
+health:
+  path: /actuator/health
+  port: 8081
+
+otel:
+  enabled: true
+  service_name: "{{.ProjectName}}"

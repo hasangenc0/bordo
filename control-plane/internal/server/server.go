@@ -15,6 +15,7 @@ import (
 	"github.com/bordo-io/bordo/control-plane/internal/config"
 	"github.com/bordo-io/bordo/control-plane/internal/fleet"
 	"github.com/bordo-io/bordo/control-plane/internal/registry"
+	"github.com/bordo-io/bordo/control-plane/internal/secrets"
 	"github.com/bordo-io/bordo/control-plane/internal/store"
 	"github.com/bordo-io/bordo/control-plane/internal/version"
 	"github.com/go-chi/chi/v5"
@@ -23,20 +24,27 @@ import (
 
 // Server is the bordod HTTP API server.
 type Server struct {
-	cfg    *config.Config
-	logger *slog.Logger
-	router *chi.Mux
-	db     *sql.DB
-	http   *http.Server
+	cfg       *config.Config
+	logger    *slog.Logger
+	router    *chi.Mux
+	db        *sql.DB
+	http      *http.Server
+	secretKey [32]byte
 }
 
 // New creates a Server wired with all routes.
 func New(cfg *config.Config, logger *slog.Logger, db *sql.DB) *Server {
+	secretKey, err := secrets.DeriveKey()
+	if err != nil {
+		// Non-fatal: log the error and use the zero key (secrets will be unusable but server still starts).
+		logger.Warn("secrets: could not derive encryption key, secrets disabled", "error", err)
+	}
 	s := &Server{
-		cfg:    cfg,
-		logger: logger,
-		db:     db,
-		router: chi.NewRouter(),
+		cfg:       cfg,
+		logger:    logger,
+		db:        db,
+		router:    chi.NewRouter(),
+		secretKey: secretKey,
 	}
 	s.registerMiddleware()
 	s.registerRoutes()
@@ -103,6 +111,13 @@ func (s *Server) registerRoutes() {
 		r.Mount("/projects", registry.NewHandler(registry.New(s.db)))
 		r.Mount("/regions", fleet.NewHandler(fleet.New(s.db)))
 		r.Mount("/builds", buildorchestrator.NewHandler(buildorchestrator.New(s.db)))
+
+		secretsHandler := secrets.NewHandler(secrets.NewSQLiteStore(s.db, s.secretKey))
+		r.Route("/projects/{projectID}/secrets", func(r chi.Router) {
+			r.Post("/", secretsHandler.Set)
+			r.Get("/", secretsHandler.List)
+			r.Delete("/{key}", secretsHandler.Delete)
+		})
 	})
 }
 

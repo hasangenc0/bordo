@@ -1,10 +1,12 @@
-// Package controller will implement the multi-region fleet controller.
+// Package controller implements the multi-region fleet controller (BRD-012).
 //
-// Responsibilities (BRD-012):
-//   - Maintain a client-go shared informer per registered regional cluster
-//   - Detect node join/leave events and propagate health to the control plane
-//   - Reconcile desired workload state in each cluster
-//   - Auto-reconnect on cluster unreachability
+// The Controller manages one watcher goroutine per registered regional cluster.
+// Each watcher polls the k3s API server (/api/v1/nodes) every 30 seconds using
+// a TLS HTTP client built from the cluster's certificate credentials. Node Ready
+// status is reported to the control-plane via POST /v1/fleet/regions/{name}/health.
 //
-// See tracker/backlog/BRD-012-multi-region-fleet-controller.md.
+// On cluster unreachability the watcher backs off exponentially (up to 5 min)
+// before resuming the normal poll cycle.
+//
+// See tracker/done/BRD-012-multi-region-fleet-controller.md.
 package controller

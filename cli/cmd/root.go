@@ -25,6 +25,7 @@ func Root() *cobra.Command {
 		ProjectCmd(),
 		TemplateCmd(),
 		BuildCmd(),
+		SecretCmd(),
 	)
 
 	return root

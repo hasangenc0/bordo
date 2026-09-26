@@ -1,0 +1,30 @@
+spring:
+  application:
+    name: {{.ProjectName}}
+  datasource:
+    url: ${JDBC_URL:jdbc:h2:mem:jobdb;DB_CLOSE_DELAY=-1}
+    driver-class-name: ${JDBC_DRIVER:org.h2.Driver}
+    username: ${JDBC_USER:sa}
+    password: ${JDBC_PASSWORD:}
+
+server:
+  port: 8083
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+
+bordo:
+  job:
+    cron: "{{.CronExpression}}"
+    lock-timeout-ms: 30000
+    enabled: true
+
+otel:
+  service:
+    name: ${spring.application.name}
+  exporter:
+    otlp:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4317}

@@ -1,0 +1,29 @@
+spring:
+  application:
+    name: {{.ProjectName}}
+
+server:
+  port: 8081
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: always
+
+bordo:
+  worker:
+    queue-name: {{.QueueName}}
+    max-retries: 3
+    backoff-ms: 1000
+    dlq-enabled: true
+
+otel:
+  service:
+    name: ${spring.application.name}
+  exporter:
+    otlp:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4317}

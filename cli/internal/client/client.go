@@ -120,6 +120,50 @@ func (c *Client) GetBuildLogs(ctx context.Context, buildID string) ([]string, er
 }
 
 // DeleteProject calls DELETE /v1/projects/{id}.
+// SecretEntry is a secret key record (value is never returned).
+type SecretEntry struct {
+	Key       string `json:"key"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+// SetSecret calls POST /v1/projects/{projectID}/secrets.
+func (c *Client) SetSecret(ctx context.Context, projectID, key, value string) error {
+	body := map[string]string{"key": key, "value": value}
+	var out map[string]string
+	return c.post(ctx, "/v1/projects/"+projectID+"/secrets", body, &out)
+}
+
+// ListSecrets calls GET /v1/projects/{projectID}/secrets.
+func (c *Client) ListSecrets(ctx context.Context, projectID string) ([]SecretEntry, error) {
+	var resp struct {
+		Secrets []SecretEntry `json:"secrets"`
+	}
+	if err := c.get(ctx, "/v1/projects/"+projectID+"/secrets", &resp); err != nil {
+		return nil, err
+	}
+	return resp.Secrets, nil
+}
+
+// DeleteSecret calls DELETE /v1/projects/{projectID}/secrets/{key}.
+func (c *Client) DeleteSecret(ctx context.Context, projectID, key string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete,
+		c.baseURL+"/v1/projects/"+projectID+"/secrets/"+key, nil)
+	if err != nil {
+		return err
+	}
+	c.addAuth(req)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	return c.readError(resp)
+}
+
 func (c *Client) DeleteProject(ctx context.Context, id string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL+"/v1/projects/"+id, nil)
 	if err != nil {

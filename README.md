@@ -52,26 +52,60 @@ fleet controller spans all regions
 
 ## Project status
 
-🚧 **Early development** — foundation in place, Build layer in progress.
+🚧 **Active development — Build layer MVP complete.**
 
-See [`tracker/BOARD.md`](tracker/BOARD.md) for the live kanban board and [`tracker/EPICS.md`](tracker/EPICS.md) for the roadmap.
+**Done (14 issues):**
+- BRD-000 Foundation & repo scaffolding
+- BRD-001 Control-plane REST API server (chi, port 7401)
+- BRD-002 Project registry & catalog (SQLite)
+- BRD-003 Config, structured logging, health/version endpoints
+- BRD-004 CLI — config, login, project, build commands
+- BRD-005 Template engine + golden-path template contract
+- BRD-006 `java-web-service` golden-path template (Spring Boot 3.3, OTel, actuator)
+- BRD-007 Containerized build (docker buildx) → OCI image + push to registry
+- BRD-008 Build MVP demo: project create → scaffold → docker build → artifact
+- BRD-010 k3s bootstrap agent over SSH
+- BRD-011 Region + cluster registration & fleet state
+- BRD-040 Agent chat loop + MCP tool registry (WebSocket + MCP endpoints)
+- BRD-080 RBAC + multi-tenancy model
+- BRD-091 `make board` generator for `tracker/BOARD.md`
 
-## Getting started
+See [`tracker/BOARD.md`](tracker/BOARD.md) for the live kanban board and [`tracker/EPICS.md`](tracker/EPICS.md) for the full roadmap.
 
-> Detailed guide in [`docs/guides/getting-started.md`](docs/guides/getting-started.md) (coming soon).
+## Quickstart
+
+Full guide: [`docs/guides/getting-started.md`](docs/guides/getting-started.md)
 
 ```bash
-# 1. Build the CLI
-cd cli && go build -o bordo . && mv bordo /usr/local/bin/
+# 1. Clone and build
+git clone https://github.com/bordo-io/bordo.git
+cd bordo
+make build
+export PATH="$PWD/bin:$PATH"
 
 # 2. Start the control plane
-cd control-plane && go build -o bordod . && ./bordod serve
+bordod serve
 
-# 3. Bootstrap a region (SSH to a VM)
-bordo region add --name us-east-1 --host 1.2.3.4 --key ~/.ssh/id_ed25519
+# 3. Configure the CLI (in a second terminal)
+bordo config set server http://localhost:7401
 
-# 4. Create your first project
-bordo project create my-api --template java-web-service
+# 4. Create a project from a template
+bordo project create hello-service --template java-web-service
+
+# 5. Scaffold the template locally
+bordo template expand java-web-service \
+  --var "ProjectName=hello-service" \
+  --var "GroupId=com.example" \
+  --output /tmp/hello-service
+
+# 6. Trigger a container build
+bordo build trigger hello-service --registry localhost:5000 --tag v0.1.0
+```
+
+Run the end-to-end demo:
+
+```bash
+bash examples/java-web-service-demo/demo.sh
 ```
 
 ## Contributing

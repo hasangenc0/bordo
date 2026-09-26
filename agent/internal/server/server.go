@@ -11,6 +11,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/bordo-io/bordo/agent/internal/tools"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/gorilla/websocket"
@@ -30,7 +31,7 @@ type Server struct {
 	router   *chi.Mux
 	http     *http.Server
 	sessions *SessionStore
-	tools    *ToolRegistry
+	tools    *tools.ToolRegistry
 	upgrader websocket.Upgrader
 }
 
@@ -39,18 +40,24 @@ func Run(ctx context.Context, cfg Config) error {
 	if cfg.Port == 0 {
 		cfg.Port = 7402
 	}
+
+	cpURL := os.Getenv("BORDO_CP_URL")
+	if cpURL == "" {
+		cpURL = "http://localhost:7401"
+	}
+	cpToken := os.Getenv("BORDO_TOKEN")
+	cpClient := tools.NewCPClient(cpURL, cpToken)
+
 	s := &Server{
 		cfg:      cfg,
 		logger:   newLogger(cfg.LogLevel),
 		router:   chi.NewRouter(),
 		sessions: NewSessionStore(),
-		tools:    NewToolRegistry(),
+		tools:    tools.NewBordoToolRegistry(cpClient),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
 	}
-
-	s.tools.Register(PingTool())
 
 	s.router.Use(middleware.RequestID)
 	s.router.Use(middleware.Recoverer)
@@ -61,6 +68,8 @@ func Run(ctx context.Context, cfg Config) error {
 	s.router.Get("/ws/chat", s.handleChat)
 	s.router.Get("/sessions", s.handleListSessions)
 	s.router.Post("/mcp", s.handleMCP)
+	s.router.Get("/mcp/tools", s.handleListTools)
+	s.router.Post("/mcp/tools/{name}", s.handleCallTool)
 
 	s.http = &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
@@ -160,6 +169,39 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	writeJSON(w, http.StatusOK, MCPResponse{Result: result})
+}
+
+func (s *Server) handleListTools(w http.ResponseWriter, r *http.Request) {
+	type toolInfo struct {
+		Name        string         `json:"name"`
+		Description string         `json:"description"`
+		Schema      map[string]any `json:"schema,omitempty"`
+	}
+	all := s.tools.List()
+	out := make([]toolInfo, 0, len(all))
+	for _, t := range all {
+		out = append(out, toolInfo{Name: t.Name, Description: t.Description, Schema: t.Schema})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tools": out})
+}
+
+func (s *Server) handleCallTool(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	tool := s.tools.Get(name)
+	if tool == nil {
+		writeJSON(w, http.StatusNotFound, MCPResponse{Error: "tool not found: " + name})
+		return
+	}
+	var params map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
+		params = map[string]any{}
+	}
+	result, err := tool.Call(r.Context(), params)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, MCPResponse{Error: err.Error()})
+		return
+	}
 	writeJSON(w, http.StatusOK, MCPResponse{Result: result})
 }
 
