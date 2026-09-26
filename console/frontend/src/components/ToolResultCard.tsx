@@ -20,7 +20,7 @@ function BuildCard({ data }: { data: Record<string, unknown> }) {
       <div className="tool-card-header">🔨 Build</div>
       <div className="tool-card-row"><span>ID</span><code>{String(data.id ?? '—')}</code></div>
       <div className="tool-card-row"><span>Status</span><span className="badge">{String(data.status ?? 'unknown')}</span></div>
-      {data.image_tag && (
+      {!!data.image_tag && (
         <div className="tool-card-row"><span>Image</span><code>{String(data.image_tag)}</code></div>
       )}
     </div>
