@@ -11,10 +11,14 @@ import (
 	"net/http"
 	"time"
 
+	"os"
+
 	"github.com/bordo-io/bordo/control-plane/internal/buildorchestrator"
 	"github.com/bordo-io/bordo/control-plane/internal/config"
 	"github.com/bordo-io/bordo/control-plane/internal/fleet"
+	"github.com/bordo-io/bordo/control-plane/internal/observe"
 	"github.com/bordo-io/bordo/control-plane/internal/registry"
+	"github.com/bordo-io/bordo/control-plane/internal/release"
 	"github.com/bordo-io/bordo/control-plane/internal/secrets"
 	"github.com/bordo-io/bordo/control-plane/internal/store"
 	"github.com/bordo-io/bordo/control-plane/internal/version"
@@ -111,6 +115,7 @@ func (s *Server) registerRoutes() {
 		r.Mount("/projects", registry.NewHandler(registry.New(s.db)))
 		r.Mount("/regions", fleet.NewHandler(fleet.New(s.db)))
 		r.Mount("/builds", buildorchestrator.NewHandler(buildorchestrator.New(s.db)))
+		r.Mount("/releases", release.NewHandler(s.db))
 
 		secretsHandler := secrets.NewHandler(secrets.NewSQLiteStore(s.db, s.secretKey))
 		r.Route("/projects/{projectID}/secrets", func(r chi.Router) {
@@ -118,6 +123,15 @@ func (s *Server) registerRoutes() {
 			r.Get("/", secretsHandler.List)
 			r.Delete("/{key}", secretsHandler.Delete)
 		})
+
+		observeHandler := observe.NewHandler(observe.BackendConfig{
+			VictoriaMetricsURL: os.Getenv("BORDO_VM_URL"),
+			LokiURL:            os.Getenv("BORDO_LOKI_URL"),
+			TempoURL:           os.Getenv("BORDO_TEMPO_URL"),
+		})
+		r.Get("/observe/metrics", observeHandler.QueryMetrics)
+		r.Get("/observe/logs", observeHandler.QueryLogs)
+		r.Get("/observe/traces/{traceID}", observeHandler.QueryTrace)
 	})
 }
 

@@ -1,0 +1,21 @@
+name: java-data-layer
+description: Spring Boot service with bordo-data (HikariCP + Flyway migrations + OTel JDBC tracing), demonstrating PostgreSQL setup
+runtime: java
+version: "1.0"
+
+variables:
+  - name: ProjectName
+    description: Maven artifactId and Spring Boot app name (e.g. user-service)
+    required: true
+  - name: GroupId
+    description: Maven groupId and root Java package (e.g. com.example)
+    required: true
+    default: com.example
+
+health:
+  path: /actuator/health
+  port: 8080
+
+build:
+  tool: maven
+  dockerfile: Dockerfile

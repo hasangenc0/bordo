@@ -6,5 +6,7 @@ use (
 	./cli
 	./control-plane
 	./fleet
+	./observe
+	./release
 	./scripts
 )

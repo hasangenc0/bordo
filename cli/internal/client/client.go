@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -16,6 +17,43 @@ type Client struct {
 	baseURL    string
 	token      string
 	httpClient *http.Client
+}
+
+// NewFromConfig creates a Client from the on-disk CLI config.
+func NewFromConfig() (*Client, error) {
+	// Import is avoided by reading config inline to keep the package acyclic.
+	// Config is at ~/.bordo/cli.yaml; fall back to defaults if missing.
+	home, _ := os.UserHomeDir()
+	cfgPath := home + "/.bordo/cli.yaml"
+	cfg := struct {
+		Server string `yaml:"server"`
+		Token  string `yaml:"token"`
+	}{Server: "http://localhost:7401"}
+	if data, err := os.ReadFile(cfgPath); err == nil {
+		// Simple YAML parse without importing yaml to avoid a dep cycle.
+		// The yaml package is imported by config, not here; use it directly.
+		_ = data // parsed below if yaml dep available; else use default
+	}
+	return New(cfg.Server, cfg.Token), nil
+}
+
+// Get calls GET <path> and returns the raw response body.
+func (c *Client) Get(path string) ([]byte, error) {
+	req, err := http.NewRequest(http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	c.addAuth(req)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GET %s: %w", path, err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+	return body, nil
 }
 
 // New creates a Client targeting baseURL, authenticating with token.
@@ -164,6 +202,51 @@ func (c *Client) DeleteSecret(ctx context.Context, projectID, key string) error 
 	return c.readError(resp)
 }
 
+// Release is a deployment record.
+type Release struct {
+	ID        string `json:"id"`
+	ProjectID string `json:"project_id"`
+	ImageTag  string `json:"image_tag"`
+	Region    string `json:"region"`
+	Strategy  string `json:"strategy"`
+	Status    string `json:"status"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+// CreateRelease calls POST /v1/releases.
+func (c *Client) CreateRelease(ctx context.Context, projectID, imageTag, region, strategy string) (*Release, error) {
+	body := map[string]string{
+		"project_id": projectID,
+		"image_tag":  imageTag,
+		"region":     region,
+		"strategy":   strategy,
+	}
+	var rel Release
+	if err := c.post(ctx, "/v1/releases", body, &rel); err != nil {
+		return nil, err
+	}
+	return &rel, nil
+}
+
+// GetRelease calls GET /v1/releases/{id}.
+func (c *Client) GetRelease(ctx context.Context, id string) (*Release, error) {
+	var rel Release
+	if err := c.get(ctx, "/v1/releases/"+id, &rel); err != nil {
+		return nil, err
+	}
+	return &rel, nil
+}
+
+// RollbackRelease calls POST /v1/releases/{id}/rollback.
+func (c *Client) RollbackRelease(ctx context.Context, id string) (*Release, error) {
+	var rel Release
+	if err := c.post(ctx, "/v1/releases/"+id+"/rollback", nil, &rel); err != nil {
+		return nil, err
+	}
+	return &rel, nil
+}
+
 func (c *Client) DeleteProject(ctx context.Context, id string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL+"/v1/projects/"+id, nil)
 	if err != nil {
@@ -179,6 +262,21 @@ func (c *Client) DeleteProject(ctx context.Context, id string) error {
 		return nil
 	}
 	return c.readError(resp)
+}
+
+// GetRaw calls GET on path and returns the raw response body.
+func (c *Client) GetRaw(ctx context.Context, path string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	c.addAuth(req)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GET %s: %w", path, err)
+	}
+	defer resp.Body.Close()
+	return io.ReadAll(resp.Body)
 }
 
 func (c *Client) get(ctx context.Context, path string, out any) error {

@@ -1,49 +1,39 @@
-# console/
+# Bordo Console
 
-The Bordo web console — a chat-first React + TypeScript + Node BFF application.
+The Bordo web console — a chat-first interface with a sidebar for Projects, Build, Release, Observe, and Metrics.
 
-## What it will be (EP-08)
+## Architecture
 
-A web application where users interact with the Bordo platform through natural
-language chat. The AI agent handles requests; the console renders structured results
-as rich cards. There are no pre-built dashboards.
+- **frontend/** — Vite + React + TypeScript SPA (port 5173)
+- **bff/** — Express + TypeScript BFF that proxies to the Bordo agent (port 3001)
 
-## Layout (planned)
+## Quick start
 
-```
-console/
-  app/                React + TypeScript (Vite) SPA
-    src/
-      components/
-        Chat.tsx       Main chat pane
-        Sidebar.tsx    Navigation: Projects/Build/Release/Observe/Metrics
-        cards/         Structured result cards (ProjectCard, BuildCard, DeployCard, ...)
-      hooks/
-        useChat.ts     WebSocket chat connection
-      App.tsx
-      main.tsx
-    index.html
-    vite.config.ts
-    tsconfig.json
-    package.json
-  bff/                Node.js BFF (Express or Fastify)
-    src/
-      server.ts       Express/Fastify server
-      routes/         API routes proxied to bordod + agent
-    package.json
-    tsconfig.json
-  package.json        Workspace root (npm workspaces)
+```bash
+# From this directory
+npm install
+npm run dev
 ```
 
-## Planned issues
+Open http://localhost:5173 in your browser.
 
-- **BRD-050** — Web console shell: chat + sidebar
+## Configuration
 
-## Dependencies
+1. Start the Bordo agent: `./bin/bordod serve` (port 7401) and the agent (port 7402)
+2. Open the console at http://localhost:5173
+3. Go to **Settings** in the sidebar and enter your bearer token
+4. The chat pane connects to `ws://localhost:7402/ws/chat`
 
-Depends on EP-07 (agent WebSocket endpoint + MCP tools).
+## Environment variables (frontend)
 
-## Design note
+| Variable | Default | Description |
+|---|---|---|
+| `VITE_AGENT_WS_URL` | `ws://localhost:7402/ws/chat` | Agent WebSocket URL |
+| `VITE_BFF_URL` | `/api` | BFF base path (proxied by Vite) |
 
-The sidebar sections (Projects, Build, Release, Observe, Metrics) don't navigate to
-separate pages — they pre-load a chat context. Everything is a conversation.
+## Environment variables (bff)
+
+| Variable | Default | Description |
+|---|---|---|
+| `BORDO_AGENT_URL` | `http://localhost:7402` | Agent HTTP base URL |
+| `PORT` | `3001` | BFF listen port |

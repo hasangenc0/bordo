@@ -1,0 +1,12 @@
+{
+  "name": "bordo-console",
+  "private": true,
+  "workspaces": ["frontend", "bff"],
+  "scripts": {
+    "dev": "concurrently \"npm run dev --workspace=bff\" \"npm run dev --workspace=frontend\"",
+    "build": "npm run build --workspace=frontend && npm run build --workspace=bff"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  }
+}

@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: {{.ProjectName}}
+
+server:
+  port: 8080
+
+# Bordo data layer — set DATABASE_URL in your environment or Kubernetes Secret
+bordo:
+  data:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/{{.ProjectName}}}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASSWORD:}
+    maximum-pool-size: 10
+    otel-enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: always
+
+# OpenTelemetry
+otel:
+  service:
+    name: ${spring.application.name}
+  exporter:
+    otlp:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318}
