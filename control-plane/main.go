@@ -26,12 +26,15 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/bordo-io/bordo/control-plane/internal/config"
 	"github.com/bordo-io/bordo/control-plane/internal/server"
 	"github.com/bordo-io/bordo/control-plane/internal/store"
 	"github.com/bordo-io/bordo/control-plane/internal/version"
+	"github.com/bordo-io/bordo/release/reconciler"
 	"github.com/spf13/cobra"
 )
 
@@ -98,6 +101,19 @@ func serveCmd() *cobra.Command {
 
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
+
+			// Start GitOps reconciler if BORDO_GITOPS_REPO is configured.
+			if repoURL := os.Getenv("BORDO_GITOPS_REPO"); repoURL != "" {
+				home, _ := os.UserHomeDir()
+				localPath := filepath.Join(home, ".bordo", "desired-state")
+				rec := reconciler.New(repoURL, localPath, 30*time.Second, logger)
+				go func() {
+					if err := rec.Start(ctx); err != nil {
+						logger.Error("reconciler stopped", "err", err)
+					}
+				}()
+				logger.Info("GitOps reconciler started", "repo", repoURL)
+			}
 
 			srv := server.New(cfg, logger, db)
 			return srv.Start(ctx)

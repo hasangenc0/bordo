@@ -26,13 +26,14 @@ type Config struct {
 
 // Server is the bordo-agent HTTP server.
 type Server struct {
-	cfg      Config
-	logger   *slog.Logger
-	router   *chi.Mux
-	http     *http.Server
-	sessions *SessionStore
-	tools    *tools.ToolRegistry
-	upgrader websocket.Upgrader
+	cfg       Config
+	logger    *slog.Logger
+	router    *chi.Mux
+	http      *http.Server
+	sessions  *SessionStore
+	tools     *tools.ToolRegistry
+	anthropic *AnthropicClient
+	upgrader  websocket.Upgrader
 }
 
 // Run creates and starts the server, blocking until ctx is cancelled.
@@ -49,11 +50,12 @@ func Run(ctx context.Context, cfg Config) error {
 	cpClient := tools.NewCPClient(cpURL, cpToken)
 
 	s := &Server{
-		cfg:      cfg,
-		logger:   newLogger(cfg.LogLevel),
-		router:   chi.NewRouter(),
-		sessions: NewSessionStore(),
-		tools:    tools.NewBordoToolRegistry(cpClient),
+		cfg:       cfg,
+		logger:    newLogger(cfg.LogLevel),
+		router:    chi.NewRouter(),
+		sessions:  NewSessionStore(),
+		tools:     tools.NewBordoToolRegistry(cpClient),
+		anthropic: NewAnthropicClient(cfg.APIKey),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
@@ -115,6 +117,11 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("chat session started", "session_id", sessionID)
 	defer s.logger.Info("chat session ended", "session_id", sessionID)
 
+	sendFrame := func(f WSFrame) error {
+		b, _ := json.Marshal(f)
+		return conn.WriteMessage(websocket.TextMessage, b)
+	}
+
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
@@ -123,22 +130,72 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 		var req ChatMessage
 		if err := json.Unmarshal(msg, &req); err != nil {
-			writeWSError(conn, "invalid message format")
+			_ = sendFrame(WSFrame{Type: "error", Content: "invalid message format"})
 			continue
 		}
 
-		session.AddMessage("user", req.Content)
+		userContent := req.Content
+		session.AddMessage("user", userContent)
 
-		reply, err := s.chat(r.Context(), session, req.Content)
-		if err != nil {
-			writeWSError(conn, "model error: "+err.Error())
+		if s.cfg.APIKey == "" {
+			reply := fmt.Sprintf("(no model provider configured — set ANTHROPIC_API_KEY; received: %q)", userContent)
+			session.AddMessage("assistant", reply)
+			if err := sendFrame(WSFrame{Type: "message", Role: "assistant", Content: reply}); err != nil {
+				break
+			}
+			_ = sendFrame(WSFrame{Type: "done"})
 			continue
 		}
 
-		session.AddMessage("assistant", reply)
+		// Build Anthropic tools list from the registry.
+		allTools := s.tools.List()
+		anthropicTools := make([]AnthropicTool, 0, len(allTools))
+		for _, t := range allTools {
+			schema := t.Schema
+			if schema == nil {
+				schema = map[string]any{"type": "object", "properties": map[string]any{}}
+			}
+			anthropicTools = append(anthropicTools, AnthropicTool{
+				Name:        t.Name,
+				Description: t.Description,
+				InputSchema: schema,
+			})
+		}
 
-		resp, _ := json.Marshal(ChatMessage{Role: "assistant", Content: reply})
-		if err := conn.WriteMessage(websocket.TextMessage, resp); err != nil {
+		// History up to (not including) the message we just added.
+		history := session.ToAnthropicMessages()
+		// The last entry is the user message we just added; use the full history.
+
+		var fullReply string
+		_, loopErr := s.anthropic.RunAgentLoop(
+			r.Context(),
+			history,
+			anthropicTools,
+			func(ctx context.Context, name string, input map[string]any) (any, error) {
+				tool := s.tools.Get(name)
+				if tool == nil {
+					return nil, fmt.Errorf("unknown tool: %s", name)
+				}
+				return tool.Call(ctx, input)
+			},
+			func(text string) {
+				_ = sendFrame(WSFrame{Type: "message", Role: "assistant", Content: text})
+				fullReply += text
+			},
+			func(name string, input map[string]any) {
+				_ = sendFrame(WSFrame{Type: "tool_call", ToolName: name, Input: input})
+			},
+		)
+
+		if loopErr != nil {
+			s.logger.Error("agent loop error", "error", loopErr)
+			_ = sendFrame(WSFrame{Type: "error", Content: "model error: " + loopErr.Error()})
+			_ = sendFrame(WSFrame{Type: "done"})
+			continue
+		}
+
+		session.AddMessage("assistant", fullReply)
+		if err := sendFrame(WSFrame{Type: "done"}); err != nil {
 			break
 		}
 	}
@@ -205,13 +262,6 @@ func (s *Server) handleCallTool(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, MCPResponse{Result: result})
 }
 
-// chat invokes the model provider. Falls back to a canned reply if no API key is set.
-func (s *Server) chat(ctx context.Context, session *Session, userMsg string) (string, error) {
-	if s.cfg.APIKey == "" {
-		return fmt.Sprintf("(no model provider configured — received: %q)", userMsg), nil
-	}
-	return callAnthropic(ctx, s.cfg.APIKey, session.Messages(), userMsg)
-}
 
 func newLogger(level string) *slog.Logger {
 	var lvl slog.Level

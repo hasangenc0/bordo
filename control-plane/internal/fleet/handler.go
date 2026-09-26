@@ -1,13 +1,16 @@
 package fleet
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 type addRegionRequest struct {
@@ -23,11 +26,84 @@ func NewHandler(store *Store) http.Handler {
 	r.Get("/", h.list)
 	r.Get("/{id}", h.get)
 	r.Delete("/{id}", h.remove)
+	r.Post("/{name}/health", h.reportHealth)
+	r.Get("/{name}/health", h.getHealth)
 	return r
 }
 
 type handler struct {
 	store *Store
+}
+
+// NodeHealth is a single node's reported health.
+type NodeHealth struct {
+	Name          string    `json:"name"`
+	Ready         bool      `json:"ready"`
+	LastHeartbeat time.Time `json:"last_heartbeat"`
+}
+
+func (h *handler) reportHealth(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	var report struct {
+		Nodes []NodeHealth `json:"nodes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&report); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	for _, n := range report.Nodes {
+		id := uuid.NewString()
+		ready := 0
+		if n.Ready {
+			ready = 1
+		}
+		_, err := h.store.db.ExecContext(r.Context(), `
+			INSERT INTO bordo_node_health (id, region_name, node_name, ready, last_heartbeat, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT(region_name, node_name) DO UPDATE SET
+				ready = excluded.ready,
+				last_heartbeat = excluded.last_heartbeat,
+				updated_at = excluded.updated_at`,
+			id, name, n.Name, ready, n.LastHeartbeat.UTC(), time.Now().UTC(),
+		)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (h *handler) getHealth(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	rows, err := h.store.db.QueryContext(r.Context(), `
+		SELECT node_name, ready, last_heartbeat
+		FROM bordo_node_health WHERE region_name = ? ORDER BY node_name`, name)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer rows.Close()
+
+	var nodes []NodeHealth
+	for rows.Next() {
+		var n NodeHealth
+		var ready int
+		var heartbeat sql.NullTime
+		if err := rows.Scan(&n.Name, &ready, &heartbeat); err != nil {
+			writeErr(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		n.Ready = ready == 1
+		if heartbeat.Valid {
+			n.LastHeartbeat = heartbeat.Time
+		}
+		nodes = append(nodes, n)
+	}
+	if nodes == nil {
+		nodes = []NodeHealth{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"region": name, "nodes": nodes})
 }
 
 func (h *handler) add(w http.ResponseWriter, r *http.Request) {

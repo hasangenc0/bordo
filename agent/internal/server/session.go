@@ -38,6 +38,20 @@ func (s *Session) Messages() []Message {
 	return out
 }
 
+// ToAnthropicMessages converts the session history to Anthropic API message format.
+// Only user and assistant turns with string content are included.
+func (s *Session) ToAnthropicMessages() []AnthropicMessage {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]AnthropicMessage, 0, len(s.messages))
+	for _, m := range s.messages {
+		if m.Role == "user" || m.Role == "assistant" {
+			out = append(out, AnthropicMessage{Role: m.Role, Content: m.Content})
+		}
+	}
+	return out
+}
+
 // SessionStore manages active chat sessions.
 type SessionStore struct {
 	mu       sync.Mutex

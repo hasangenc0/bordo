@@ -22,6 +22,7 @@ func Root() *cobra.Command {
 		VersionCmd(),
 		ConfigCmd(),
 		LoginCmd(),
+		WhoamiCmd(),
 		ProjectCmd(),
 		TemplateCmd(),
 		BuildCmd(),

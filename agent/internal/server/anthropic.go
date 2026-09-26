@@ -7,69 +7,192 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 )
 
-// callAnthropic sends the conversation to the Anthropic Messages API and returns
-// the assistant's reply text.
-func callAnthropic(ctx context.Context, apiKey string, history []Message, userMsg string) (string, error) {
-	type msg struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	}
+const (
+	anthropicAPIURL  = "https://api.anthropic.com/v1/messages"
+	anthropicVersion = "2023-06-01"
+	defaultModel     = "claude-haiku-4-5-20251001"
+	maxIterations    = 10
+	systemPrompt     = "You are the Bordo platform assistant. You help users manage their software factory: create projects, trigger builds, deploy services, and query observability data. Use the available tools to take actions on behalf of the user."
+)
 
-	msgs := make([]msg, 0, len(history)+1)
-	for _, m := range history {
-		if m.Role == "user" || m.Role == "assistant" {
-			msgs = append(msgs, msg{Role: m.Role, Content: m.Content})
+// AnthropicTool mirrors the Anthropic API tool definition.
+type AnthropicTool struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	InputSchema map[string]any `json:"input_schema"`
+}
+
+// ContentBlock is one element in a message's content array.
+type ContentBlock struct {
+	Type string `json:"type"`
+	// type=text
+	Text string `json:"text,omitempty"`
+	// type=tool_use
+	ID    string         `json:"id,omitempty"`
+	Name  string         `json:"name,omitempty"`
+	Input map[string]any `json:"input,omitempty"`
+	// type=tool_result
+	ToolUseID string `json:"tool_use_id,omitempty"`
+	Content   string `json:"content,omitempty"`
+}
+
+// AnthropicMessage is one turn in the API conversation.
+type AnthropicMessage struct {
+	Role    string `json:"role"`
+	Content any    `json:"content"` // string OR []ContentBlock
+}
+
+type apiRequest struct {
+	Model     string             `json:"model"`
+	MaxTokens int                `json:"max_tokens"`
+	System    string             `json:"system"`
+	Messages  []AnthropicMessage `json:"messages"`
+	Tools     []AnthropicTool    `json:"tools,omitempty"`
+}
+
+type apiResponse struct {
+	StopReason string         `json:"stop_reason"`
+	Content    []ContentBlock `json:"content"`
+	Error      *struct {
+		Type    string `json:"type"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+// AnthropicClient calls the Anthropic Messages API.
+type AnthropicClient struct {
+	APIKey string
+	Model  string
+	http   *http.Client
+}
+
+func NewAnthropicClient(apiKey string) *AnthropicClient {
+	return &AnthropicClient{
+		APIKey: apiKey,
+		Model:  defaultModel,
+		http:   &http.Client{Timeout: 60 * time.Second},
+	}
+}
+
+// RunAgentLoop runs the full agentic tool-calling loop.
+//
+// It sends messages to Claude, handles tool_use blocks by calling tools and
+// feeding results back, and repeats until stop_reason=end_turn or maxIterations.
+//
+// onText is called with each text block as it arrives.
+// onToolCall is called just before each tool is invoked.
+func (c *AnthropicClient) RunAgentLoop(
+	ctx context.Context,
+	messages []AnthropicMessage,
+	tools []AnthropicTool,
+	toolCaller func(ctx context.Context, name string, input map[string]any) (any, error),
+	onText func(text string),
+	onToolCall func(name string, input map[string]any),
+) (string, error) {
+	var fullText string
+	msgs := make([]AnthropicMessage, len(messages))
+	copy(msgs, messages)
+
+	for i := 0; i < maxIterations; i++ {
+		resp, err := c.callAPI(ctx, msgs, tools)
+		if err != nil {
+			return fullText, err
 		}
-	}
-	msgs = append(msgs, msg{Role: "user", Content: userMsg})
 
-	body := map[string]any{
-		"model":      "claude-haiku-4-5-20251001",
-		"max_tokens": 1024,
-		"system":     "You are Bordo, an AI assistant for the Bordo software factory platform. Help users manage projects, builds, releases, and infrastructure.",
-		"messages":   msgs,
+		for _, block := range resp.Content {
+			if block.Type == "text" && block.Text != "" {
+				fullText += block.Text
+				if onText != nil {
+					onText(block.Text)
+				}
+			}
+		}
+
+		if resp.StopReason == "end_turn" || resp.StopReason == "" {
+			break
+		}
+		if resp.StopReason != "tool_use" {
+			break
+		}
+
+		// Append Claude's full assistant turn (must include tool_use blocks for ID matching).
+		msgs = append(msgs, AnthropicMessage{Role: "assistant", Content: resp.Content})
+
+		// Call each tool and collect results.
+		var resultBlocks []ContentBlock
+		for _, block := range resp.Content {
+			if block.Type != "tool_use" {
+				continue
+			}
+			if onToolCall != nil {
+				onToolCall(block.Name, block.Input)
+			}
+			result, err := toolCaller(ctx, block.Name, block.Input)
+			var resultStr string
+			if err != nil {
+				resultStr = fmt.Sprintf(`{"error":%q}`, err.Error())
+			} else {
+				b, _ := json.Marshal(result)
+				resultStr = string(b)
+			}
+			resultBlocks = append(resultBlocks, ContentBlock{
+				Type:      "tool_result",
+				ToolUseID: block.ID,
+				Content:   resultStr,
+			})
+		}
+
+		msgs = append(msgs, AnthropicMessage{Role: "user", Content: resultBlocks})
+	}
+
+	return fullText, nil
+}
+
+func (c *AnthropicClient) callAPI(ctx context.Context, msgs []AnthropicMessage, tools []AnthropicTool) (*apiResponse, error) {
+	body := apiRequest{
+		Model:     c.Model,
+		MaxTokens: 4096,
+		System:    systemPrompt,
+		Messages:  msgs,
+		Tools:     tools,
 	}
 
 	data, err := json.Marshal(body)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.anthropic.com/v1/messages", bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, anthropicAPIURL, bytes.NewReader(data))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	req.Header.Set("x-api-key", apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("x-api-key", c.APIKey)
+	req.Header.Set("anthropic-version", anthropicVersion)
 	req.Header.Set("content-type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("anthropic API request: %w", err)
+		return nil, fmt.Errorf("anthropic API: %w", err)
 	}
 	defer resp.Body.Close()
 
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading anthropic response: %w", err)
+	}
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("anthropic API error %d: %s", resp.StatusCode, string(b))
+		return nil, fmt.Errorf("anthropic API %d: %s", resp.StatusCode, string(raw))
 	}
 
-	var result struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
+	var result apiResponse
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("decoding anthropic response: %w", err)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("decoding anthropic response: %w", err)
+	if result.Error != nil {
+		return nil, fmt.Errorf("anthropic %s: %s", result.Error.Type, result.Error.Message)
 	}
-
-	for _, c := range result.Content {
-		if c.Type == "text" {
-			return c.Text, nil
-		}
-	}
-	return "", fmt.Errorf("no text content in anthropic response")
+	return &result, nil
 }

@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/bordo-io/bordo/cli/internal/config"
 )
 
 // Client is a typed HTTP client for the bordod REST API.
@@ -20,19 +22,18 @@ type Client struct {
 }
 
 // NewFromConfig creates a Client from the on-disk CLI config.
+// Priority: env vars > config file > defaults.
 func NewFromConfig() (*Client, error) {
-	// Import is avoided by reading config inline to keep the package acyclic.
-	// Config is at ~/.bordo/cli.yaml; fall back to defaults if missing.
-	home, _ := os.UserHomeDir()
-	cfgPath := home + "/.bordo/cli.yaml"
-	cfg := struct {
-		Server string `yaml:"server"`
-		Token  string `yaml:"token"`
-	}{Server: "http://localhost:7401"}
-	if data, err := os.ReadFile(cfgPath); err == nil {
-		// Simple YAML parse without importing yaml to avoid a dep cycle.
-		// The yaml package is imported by config, not here; use it directly.
-		_ = data // parsed below if yaml dep available; else use default
+	cfg, err := config.Load()
+	if err != nil {
+		cfg = &config.Config{Server: "http://localhost:7401"}
+	}
+	// Env var overrides take precedence.
+	if v := os.Getenv("BORDO_SERVER"); v != "" {
+		cfg.Server = v
+	}
+	if v := os.Getenv("BORDO_TOKEN"); v != "" {
+		cfg.Token = v
 	}
 	return New(cfg.Server, cfg.Token), nil
 }

@@ -112,7 +112,9 @@ func (s *Server) registerRoutes() {
 	s.router.Route("/v1", func(r chi.Router) {
 		r.Mount("/projects", registry.NewHandler(registry.New(s.db)))
 		r.Mount("/regions", fleet.NewHandler(fleet.New(s.db)))
-		r.Mount("/builds", buildorchestrator.NewHandler(buildorchestrator.New(s.db)))
+		buildStore := buildorchestrator.New(s.db)
+		buildExecutor := buildorchestrator.NewExecutor(buildStore, s.db, s.logger, "", "", "")
+		r.Mount("/builds", buildorchestrator.NewHandler(buildStore, buildExecutor))
 		r.Mount("/releases", release.NewHandler(s.db))
 
 		secretsHandler := secrets.NewHandler(secrets.NewSQLiteStore(s.db, s.secretKey))

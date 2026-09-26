@@ -8,9 +8,10 @@ import (
 )
 
 // NewHandler returns a chi router for the /builds REST API.
-func NewHandler(store *Store) http.Handler {
+// executor may be nil; when non-nil, triggered builds are executed asynchronously.
+func NewHandler(store *Store, executor *Executor) http.Handler {
 	r := chi.NewRouter()
-	h := &handler{store: store}
+	h := &handler{store: store, executor: executor}
 	r.Post("/", h.trigger)
 	r.Get("/", h.list)
 	r.Get("/{id}", h.get)
@@ -19,7 +20,8 @@ func NewHandler(store *Store) http.Handler {
 }
 
 type handler struct {
-	store *Store
+	store    *Store
+	executor *Executor
 }
 
 type triggerRequest struct {
@@ -48,6 +50,12 @@ func (h *handler) trigger(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+
+	// Fire-and-forget: run the build pipeline asynchronously.
+	if h.executor != nil {
+		h.executor.Execute(b.ID)
+	}
+
 	writeJSON(w, http.StatusCreated, b)
 }
 

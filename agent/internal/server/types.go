@@ -1,9 +1,20 @@
 package server
 
-// ChatMessage is sent/received over the WebSocket chat endpoint.
+// ChatMessage is an inbound WebSocket message from the client.
 type ChatMessage struct {
+	Type    string `json:"type"`    // "message"
 	Role    string `json:"role"`
 	Content string `json:"content"`
+	Token   string `json:"token,omitempty"`
+}
+
+// WSFrame is an outbound WebSocket frame from the agent.
+type WSFrame struct {
+	Type     string         `json:"type"`               // "message" | "tool_call" | "done" | "error"
+	Role     string         `json:"role,omitempty"`     // "assistant" (type=message)
+	Content  string         `json:"content,omitempty"`  // type=message or type=error
+	ToolName string         `json:"tool_name,omitempty"` // type=tool_call
+	Input    map[string]any `json:"input,omitempty"`    // type=tool_call
 }
 
 // MCPRequest is a tool call posted to /mcp.
