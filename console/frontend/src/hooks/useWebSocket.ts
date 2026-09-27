@@ -3,74 +3,100 @@ import type { Message, WSIncoming, WSOutgoing } from '../types'
 
 const RECONNECT_DELAY_MS = 3000
 
-export function useWebSocket(agentURL: string, token: string) {
+export function useWebSocket(baseURL: string, token: string, chatId: string | null) {
   const [messages, setMessages] = useState<Message[]>([])
   const [connected, setConnected] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const intentionalClose = useRef(false)
+  // Incremented whenever we switch chats; captured per-WS so stale sockets don't reconnect.
+  const epochRef = useRef(0)
 
-  const connect = useCallback(() => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return
+  const agentURL = chatId ? `${baseURL}?chat_id=${chatId}` : null
 
-    const ws = new WebSocket(agentURL)
-    wsRef.current = ws
+  const connect = useCallback(
+    (epoch: number) => {
+      if (!agentURL) return
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return
 
-    ws.onopen = () => {
-      setConnected(true)
-    }
+      const ws = new WebSocket(agentURL)
+      wsRef.current = ws
 
-    ws.onmessage = (evt) => {
-      try {
-        const msg: WSIncoming = JSON.parse(evt.data as string)
-        if (msg.type === 'message' || msg.type === 'error') {
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: `${Date.now()}-${Math.random()}`,
-              role: 'assistant',
-              content: msg.content,
-              timestamp: Date.now(),
-            },
-          ])
-        } else if (msg.type === 'tool_result' && msg.tool_name) {
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: `${Date.now()}-${Math.random()}`,
-              role: 'assistant',
-              content: msg.content,
-              toolResult: { toolName: msg.tool_name!, data: msg.data },
-              timestamp: Date.now(),
-            },
-          ])
+      ws.onopen = () => setConnected(true)
+
+      ws.onmessage = (evt) => {
+        try {
+          const msg: WSIncoming = JSON.parse(evt.data as string)
+          if (msg.type === 'history' && msg.messages) {
+            setMessages(
+              msg.messages.map((m, i) => ({
+                id: `history-${i}-${m.role}`,
+                role: m.role,
+                content: m.content,
+                timestamp: Date.now() - (msg.messages!.length - i) * 1000,
+              })),
+            )
+          } else if (msg.type === 'message' || msg.type === 'error') {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: `${Date.now()}-${Math.random()}`,
+                role: 'assistant' as const,
+                content: msg.content,
+                timestamp: Date.now(),
+              },
+            ])
+          } else if (msg.type === 'tool_result' && msg.tool_name) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: `${Date.now()}-${Math.random()}`,
+                role: 'assistant' as const,
+                content: msg.content,
+                toolResult: { toolName: msg.tool_name!, data: msg.data },
+                timestamp: Date.now(),
+              },
+            ])
+          }
+        } catch {
+          // ignore malformed frames
         }
-      } catch {
-        // ignore malformed frames
       }
-    }
 
-    ws.onclose = () => {
-      setConnected(false)
-      if (!intentionalClose.current) {
-        reconnectTimer.current = setTimeout(connect, RECONNECT_DELAY_MS)
+      ws.onclose = () => {
+        setConnected(false)
+        // Only reconnect if we're still on the same chat session (epoch unchanged).
+        if (epochRef.current === epoch) {
+          reconnectTimer.current = setTimeout(() => connect(epoch), RECONNECT_DELAY_MS)
+        }
       }
-    }
 
-    ws.onerror = () => {
-      ws.close()
-    }
-  }, [agentURL])
+      ws.onerror = () => ws.close()
+    },
+    [agentURL],
+  )
 
   useEffect(() => {
-    intentionalClose.current = false
-    connect()
+    // New epoch invalidates any pending reconnects from the previous chat.
+    epochRef.current += 1
+    const epoch = epochRef.current
+
+    setMessages([])
+    setConnected(false)
+    if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
+    wsRef.current?.close()
+    wsRef.current = null
+
+    if (!agentURL) return
+
+    connect(epoch)
+
     return () => {
-      intentionalClose.current = true
+      epochRef.current += 1 // invalidate reconnects on unmount too
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
       wsRef.current?.close()
+      wsRef.current = null
     }
-  }, [connect])
+  }, [agentURL, connect])
 
   const send = useCallback(
     (content: string) => {
@@ -81,7 +107,7 @@ export function useWebSocket(agentURL: string, token: string) {
         ...prev,
         {
           id: `${Date.now()}-${Math.random()}`,
-          role: 'user',
+          role: 'user' as const,
           content,
           timestamp: Date.now(),
         },

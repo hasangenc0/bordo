@@ -10,11 +10,12 @@ type ChatMessage struct {
 
 // WSFrame is an outbound WebSocket frame from the agent.
 type WSFrame struct {
-	Type     string         `json:"type"`               // "message" | "tool_call" | "done" | "error"
-	Role     string         `json:"role,omitempty"`     // "assistant" (type=message)
-	Content  string         `json:"content,omitempty"`  // type=message or type=error
+	Type     string         `json:"type"`                // "message" | "tool_call" | "done" | "error" | "history"
+	Role     string         `json:"role,omitempty"`      // "assistant" (type=message)
+	Content  string         `json:"content,omitempty"`   // type=message or type=error
 	ToolName string         `json:"tool_name,omitempty"` // type=tool_call
-	Input    map[string]any `json:"input,omitempty"`    // type=tool_call
+	Input    map[string]any `json:"input,omitempty"`     // type=tool_call
+	Messages any            `json:"messages,omitempty"`  // type=history
 }
 
 // MCPRequest is a tool call posted to /mcp.

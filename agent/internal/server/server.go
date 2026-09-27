@@ -9,11 +9,14 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
+	"github.com/bordo-io/bordo/agent/internal/chatstore"
 	"github.com/bordo-io/bordo/agent/internal/tools"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
@@ -34,6 +37,7 @@ type Server struct {
 	tools     *tools.ToolRegistry
 	anthropic *AnthropicClient
 	upgrader  websocket.Upgrader
+	chats     *chatstore.Store
 }
 
 // Run creates and starts the server, blocking until ctx is cancelled.
@@ -49,6 +53,16 @@ func Run(ctx context.Context, cfg Config) error {
 	cpToken := os.Getenv("BORDO_TOKEN")
 	cpClient := tools.NewCPClient(cpURL, cpToken)
 
+	chatDBPath := os.Getenv("BORDO_CHAT_DB")
+	if chatDBPath == "" {
+		home, _ := os.UserHomeDir()
+		chatDBPath = filepath.Join(home, ".bordo", "agent-chats.db")
+	}
+	chatDB, err := chatstore.Open(chatDBPath)
+	if err != nil {
+		return fmt.Errorf("open chat store: %w", err)
+	}
+
 	s := &Server{
 		cfg:       cfg,
 		logger:    newLogger(cfg.LogLevel),
@@ -56,6 +70,7 @@ func Run(ctx context.Context, cfg Config) error {
 		sessions:  NewSessionStore(),
 		tools:     tools.NewBordoToolRegistry(cpClient),
 		anthropic: NewAnthropicClient(cfg.APIKey),
+		chats:     chatDB,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
@@ -72,6 +87,13 @@ func Run(ctx context.Context, cfg Config) error {
 	s.router.Post("/mcp", s.handleMCP)
 	s.router.Get("/mcp/tools", s.handleListTools)
 	s.router.Post("/mcp/tools/{name}", s.handleCallTool)
+
+	// Chat persistence routes
+	s.router.Get("/chats", s.handleListChats)
+	s.router.Post("/chats", s.handleCreateChat)
+	s.router.Get("/chats/{id}", s.handleGetChat)
+	s.router.Delete("/chats/{id}", s.handleDeleteChat)
+	s.router.Put("/chats/{id}/title", s.handleUpdateChatTitle)
 
 	s.http = &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
@@ -106,6 +128,7 @@ func Run(ctx context.Context, cfg Config) error {
 
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	sessionID := middleware.GetReqID(r.Context())
+	chatID := r.URL.Query().Get("chat_id")
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		s.logger.Warn("websocket upgrade failed", "error", err)
@@ -114,12 +137,23 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 
 	session := s.sessions.Create(sessionID)
-	s.logger.Info("chat session started", "session_id", sessionID)
+	s.logger.Info("chat session started", "session_id", sessionID, "chat_id", chatID)
 	defer s.logger.Info("chat session ended", "session_id", sessionID)
 
 	sendFrame := func(f WSFrame) error {
 		b, _ := json.Marshal(f)
 		return conn.WriteMessage(websocket.TextMessage, b)
+	}
+
+	// Load history from chatstore and pre-populate session
+	if chatID != "" && s.chats != nil {
+		msgs, _ := s.chats.GetMessages(r.Context(), chatID)
+		if len(msgs) > 0 {
+			_ = sendFrame(WSFrame{Type: "history", Messages: msgs})
+			for _, m := range msgs {
+				session.AddMessage(m.Role, m.Content)
+			}
+		}
 	}
 
 	for {
@@ -136,6 +170,20 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 		userContent := req.Content
 		session.AddMessage("user", userContent)
+
+		// Persist user message
+		if chatID != "" && s.chats != nil {
+			_ = s.chats.AppendMessage(r.Context(), chatID, "user", userContent)
+			// Auto-title from first message
+			existing, _ := s.chats.GetMessages(r.Context(), chatID)
+			if len(existing) == 1 {
+				title := userContent
+				if len([]rune(title)) > 40 {
+					title = string([]rune(title)[:40]) + "…"
+				}
+				_ = s.chats.UpdateTitle(r.Context(), chatID, title)
+			}
+		}
 
 		if s.anthropic.Token == "" {
 			reply := fmt.Sprintf("(no model provider configured — set DEEPSEEK_API_KEY; received: %q)", userContent)
@@ -195,6 +243,9 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		}
 
 		session.AddMessage("assistant", fullReply)
+		if chatID != "" && s.chats != nil && fullReply != "" {
+			_ = s.chats.AppendMessage(r.Context(), chatID, "assistant", fullReply)
+		}
 		if err := sendFrame(WSFrame{Type: "done"}); err != nil {
 			break
 		}
@@ -205,6 +256,75 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"sessions": s.sessions.List(),
 	})
+}
+
+func (s *Server) handleListChats(w http.ResponseWriter, r *http.Request) {
+	sessions, err := s.chats.ListSessions(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if sessions == nil {
+		sessions = []chatstore.ChatSession{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"chats": sessions})
+}
+
+func (s *Server) handleCreateChat(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Title string `json:"title"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	id := uuid.New().String()
+	if err := s.chats.CreateSession(r.Context(), id, req.Title); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	sess, _ := s.chats.GetSession(r.Context(), id)
+	writeJSON(w, http.StatusCreated, sess)
+}
+
+func (s *Server) handleGetChat(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	sess, err := s.chats.GetSession(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if sess == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	msgs, _ := s.chats.GetMessages(r.Context(), id)
+	if msgs == nil {
+		msgs = []chatstore.ChatMessage{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"session": sess, "messages": msgs})
+}
+
+func (s *Server) handleDeleteChat(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := s.chats.DeleteSession(r.Context(), id); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func (s *Server) handleUpdateChatTitle(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Title string `json:"title"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Title == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "title required"})
+		return
+	}
+	if err := s.chats.UpdateTitle(r.Context(), id, req.Title); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
