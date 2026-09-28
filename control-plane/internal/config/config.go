@@ -20,11 +20,16 @@ type Config struct {
 
 // ServerConfig controls the HTTP server.
 type ServerConfig struct {
-	Port int `yaml:"port"`
+	Port    int    `yaml:"port"`
+	BaseURL string `yaml:"base_url"` // public URL, e.g. https://bordo.acme.com — required for GitHub App callbacks
 }
 
-// BaseURL returns the server's base URL derived from its port.
-func (s ServerConfig) BaseURL() string {
+// BaseURL returns the configured public base URL.
+// Falls back to http://localhost:{port} for local dev only.
+func (s ServerConfig) GetBaseURL() string {
+	if s.BaseURL != "" {
+		return strings.TrimRight(s.BaseURL, "/")
+	}
 	return fmt.Sprintf("http://localhost:%d", s.Port)
 }
 
@@ -109,6 +114,7 @@ func findConfigFile() string {
 // Supported variables:
 //
 //	BORDO_SERVER_PORT      int
+//	BORDO_BASE_URL         string  public URL of bordod, required for GitHub App callbacks
 //	BORDO_STORE_DRIVER     string
 //	BORDO_STORE_PATH       string
 //	BORDO_LOG_LEVEL        string
@@ -118,6 +124,9 @@ func applyEnv(cfg *Config) {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.Server.Port = n
 		}
+	}
+	if v := os.Getenv("BORDO_BASE_URL"); v != "" {
+		cfg.Server.BaseURL = v
 	}
 	if v := os.Getenv("BORDO_STORE_DRIVER"); v != "" {
 		cfg.Store.Driver = strings.ToLower(v)

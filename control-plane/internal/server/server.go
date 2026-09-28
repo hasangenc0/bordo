@@ -52,7 +52,7 @@ func New(cfg *config.Config, logger *slog.Logger, db *sql.DB) *Server {
 		router:            chi.NewRouter(),
 		secretKey:         secretKey,
 		releaseController: release.NewController(db, logger),
-		githubHandler:     githubpkg.NewHandler(ghStore, cfg.Server.BaseURL()),
+		githubHandler:     githubpkg.NewHandler(ghStore, cfg.Server.GetBaseURL()),
 	}
 	s.registerMiddleware()
 	s.registerRoutes()
