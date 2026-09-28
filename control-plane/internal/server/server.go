@@ -14,6 +14,7 @@ import (
 	"github.com/bordo-io/bordo/control-plane/internal/buildorchestrator"
 	"github.com/bordo-io/bordo/control-plane/internal/config"
 	"github.com/bordo-io/bordo/control-plane/internal/fleet"
+	githubpkg "github.com/bordo-io/bordo/control-plane/internal/github"
 	"github.com/bordo-io/bordo/control-plane/internal/observe"
 	"github.com/bordo-io/bordo/control-plane/internal/registry"
 	"github.com/bordo-io/bordo/control-plane/internal/release"
@@ -33,6 +34,7 @@ type Server struct {
 	http              *http.Server
 	secretKey         [32]byte
 	releaseController *release.Controller
+	githubHandler     *githubpkg.Handler
 }
 
 // New creates a Server wired with all routes.
@@ -42,6 +44,7 @@ func New(cfg *config.Config, logger *slog.Logger, db *sql.DB) *Server {
 		// Non-fatal: log the error and use the zero key (secrets will be unusable but server still starts).
 		logger.Warn("secrets: could not derive encryption key, secrets disabled", "error", err)
 	}
+	ghStore := githubpkg.NewStore(db, secretKey)
 	s := &Server{
 		cfg:               cfg,
 		logger:            logger,
@@ -49,6 +52,7 @@ func New(cfg *config.Config, logger *slog.Logger, db *sql.DB) *Server {
 		router:            chi.NewRouter(),
 		secretKey:         secretKey,
 		releaseController: release.NewController(db, logger),
+		githubHandler:     githubpkg.NewHandler(ghStore, cfg.Server.BaseURL()),
 	}
 	s.registerMiddleware()
 	s.registerRoutes()
@@ -119,6 +123,9 @@ func (s *Server) registerRoutes() {
 	s.router.Get("/readyz", s.handleReadyz)
 	s.router.Get("/version", s.handleVersion)
 
+	// GitHub App setup + OAuth callbacks (must be reachable before /v1 auth).
+	s.router.Mount("/github", s.githubHandler.Routes())
+
 	// Versioned API — route groups hang off /v1.
 	s.router.Route("/v1", func(r chi.Router) {
 		r.Mount("/projects", registry.NewHandler(registry.New(s.db)))
@@ -141,6 +148,10 @@ func (s *Server) registerRoutes() {
 		r.Get("/observe/traces/{traceID}", observeHandler.QueryTrace)
 
 		r.Get("/templates", s.handleListTemplates)
+
+		// GitHub App integration helpers.
+		r.Get("/github/token", s.handleGithubToken)
+		r.Get("/github/status", s.handleGithubStatus)
 	})
 }
 
@@ -185,6 +196,24 @@ var builtinTemplates = []templateInfo{
 
 func (s *Server) handleListTemplates(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"templates": builtinTemplates})
+}
+
+func (s *Server) handleGithubToken(w http.ResponseWriter, r *http.Request) {
+	tok, tokType, err := s.githubHandler.GetInstallationTokenFromStore(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if tok == "" {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "github not configured"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"token": tok, "type": tokType})
+}
+
+func (s *Server) handleGithubStatus(w http.ResponseWriter, r *http.Request) {
+	// Delegate to the github handler's status logic by forwarding internally.
+	s.githubHandler.ServeStatus(w, r)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

@@ -30,6 +30,7 @@ func Root() *cobra.Command {
 		DeployCmd(),
 		ObserveCmd(),
 		AgentCmd(),
+		GithubCmd(),
 	)
 
 	return root

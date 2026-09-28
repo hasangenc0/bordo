@@ -12,30 +12,51 @@ import (
 	"time"
 )
 
+// resolveGitHubToken returns a usable GitHub token from (in order):
+// 1. params["github_token"]
+// 2. GITHUB_TOKEN env var
+// 3. Bordo GitHub App installation token from the control plane
+func resolveGitHubToken(ctx context.Context, cp *CPClient, params map[string]any) (string, error) {
+	if t, _ := params["github_token"].(string); t != "" {
+		return t, nil
+	}
+	if t := os.Getenv("GITHUB_TOKEN"); t != "" {
+		return t, nil
+	}
+	// Try GitHub App integration.
+	raw, err := cp.Get(ctx, "/v1/github/token")
+	if err == nil && len(raw) > 0 {
+		var resp struct {
+			Token string `json:"token"`
+		}
+		if jsonErr := json.Unmarshal(raw, &resp); jsonErr == nil && resp.Token != "" {
+			return resp.Token, nil
+		}
+	}
+	return "", fmt.Errorf("no GitHub token available — configure the GitHub App via `bordo github setup` or set GITHUB_TOKEN")
+}
+
 func githubCreateRepoTool(cp *CPClient) *Tool {
 	return &Tool{
 		Name: "github_create_repo",
 		Description: "Create a GitHub repository and push the scaffolded project source to it. " +
 			"Requires a build to have run first so scaffold files exist. " +
-			"github_token can also be set via the GITHUB_TOKEN env var.",
+			"Token priority: github_token param → GITHUB_TOKEN env var → Bordo GitHub App (configure with `bordo github setup`).",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"project_id":   map[string]any{"type": "string", "description": "Bordo project UUID"},
 				"repo_name":    map[string]any{"type": "string", "description": "GitHub repository name, e.g. my-service"},
-				"github_token": map[string]any{"type": "string", "description": "GitHub personal access token (or set GITHUB_TOKEN env var)"},
+				"github_token": map[string]any{"type": "string", "description": "GitHub token (optional — falls back to GitHub App or GITHUB_TOKEN env var)"},
 				"org":          map[string]any{"type": "string", "description": "GitHub org or user to create the repo under (defaults to the token owner)"},
 				"private":      map[string]any{"type": "boolean", "description": "Create a private repo (default: true)"},
 			},
 			"required": []string{"project_id", "repo_name"},
 		},
 		CallFn: func(ctx context.Context, params map[string]any) (any, error) {
-			token, _ := params["github_token"].(string)
-			if token == "" {
-				token = os.Getenv("GITHUB_TOKEN")
-			}
-			if token == "" {
-				return nil, fmt.Errorf("github_token is required — pass it as a parameter or set GITHUB_TOKEN in the environment")
+			token, err := resolveGitHubToken(ctx, cp, params)
+			if err != nil {
+				return nil, err
 			}
 
 			projectID, _ := params["project_id"].(string)

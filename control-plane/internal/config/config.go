@@ -23,6 +23,11 @@ type ServerConfig struct {
 	Port int `yaml:"port"`
 }
 
+// BaseURL returns the server's base URL derived from its port.
+func (s ServerConfig) BaseURL() string {
+	return fmt.Sprintf("http://localhost:%d", s.Port)
+}
+
 // StoreConfig controls the state store.
 type StoreConfig struct {
 	// Driver is "sqlite" or "postgres".
