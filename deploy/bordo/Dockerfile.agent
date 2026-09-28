@@ -1,0 +1,33 @@
+FROM golang:1.22-alpine AS build
+WORKDIR /workspace
+
+COPY go.work go.work.sum ./
+
+COPY agent/go.mod agent/go.sum ./agent/
+COPY build/go.mod build/go.sum ./build/
+COPY cli/go.mod cli/go.sum ./cli/
+COPY control-plane/go.mod control-plane/go.sum ./control-plane/
+COPY fleet/go.mod fleet/go.sum ./fleet/
+COPY observe/go.mod observe/go.sum ./observe/
+COPY release/go.mod release/go.sum ./release/
+COPY scripts/go.mod scripts/go.sum ./scripts/
+
+RUN go work sync
+
+COPY agent/ agent/
+COPY build/ build/
+COPY cli/ cli/
+COPY control-plane/ control-plane/
+COPY fleet/ fleet/
+COPY observe/ observe/
+COPY release/ release/
+COPY scripts/ scripts/
+
+RUN go build -ldflags="-s -w" -o /bordo-agent ./agent/
+
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates
+COPY --from=build /bordo-agent /usr/local/bin/bordo-agent
+EXPOSE 7402
+ENTRYPOINT ["bordo-agent"]
+CMD ["serve"]

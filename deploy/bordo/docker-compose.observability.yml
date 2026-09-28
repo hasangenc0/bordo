@@ -1,0 +1,51 @@
+version: "3.9"
+# Optional observability overlay.
+# Run with: docker compose -f docker-compose.yml -f docker-compose.observability.yml up
+
+services:
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.103.0
+    ports:
+      - "8428:8428"
+    command:
+      - -storageDataPath=/vmdata
+      - -retentionPeriod=30d
+    volumes:
+      - vmdata:/vmdata
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:3.2.0
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/loki-config.yaml
+    volumes:
+      - loki-data:/loki
+    restart: unless-stopped
+
+  tempo:
+    image: grafana/tempo:2.6.0
+    ports:
+      - "3200:3200"
+      - "4317:4317"
+    command: -config.file=/etc/tempo/tempo-config.yaml
+    volumes:
+      - tempo-data:/var/tempo
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.107.0
+    ports:
+      - "4318:4318"
+    volumes:
+      - ../observability/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml
+    depends_on:
+      - victoriametrics
+      - loki
+      - tempo
+    restart: unless-stopped
+
+volumes:
+  vmdata:
+  loki-data:
+  tempo-data:

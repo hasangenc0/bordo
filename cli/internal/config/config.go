@@ -11,8 +11,9 @@ import (
 
 // Config is the CLI configuration stored on disk.
 type Config struct {
-	Server string `yaml:"server"`
-	Token  string `yaml:"token"`
+	Server   string `yaml:"server"`
+	Token    string `yaml:"token"`
+	AgentURL string `yaml:"agent_url"`
 }
 
 // Default returns the path to the CLI config file.
@@ -23,7 +24,7 @@ func Path() string {
 
 // Load reads the CLI config from disk. Returns an empty config if not found.
 func Load() (*Config, error) {
-	cfg := &Config{Server: "http://localhost:7401"}
+	cfg := &Config{Server: "http://localhost:7401", AgentURL: "http://localhost:7402"}
 	data, err := os.ReadFile(Path())
 	if os.IsNotExist(err) {
 		return cfg, nil
@@ -61,8 +62,10 @@ func Set(key, value string) error {
 		cfg.Server = value
 	case "token":
 		cfg.Token = value
+	case "agent_url":
+		cfg.AgentURL = value
 	default:
-		return fmt.Errorf("unknown config key %q (valid: server, token)", key)
+		return fmt.Errorf("unknown config key %q (valid: server, token, agent_url)", key)
 	}
 	return Save(cfg)
 }
@@ -78,7 +81,9 @@ func Get(key string) (string, error) {
 		return cfg.Server, nil
 	case "token":
 		return cfg.Token, nil
+	case "agent_url":
+		return cfg.AgentURL, nil
 	default:
-		return "", fmt.Errorf("unknown config key %q (valid: server, token)", key)
+		return "", fmt.Errorf("unknown config key %q (valid: server, token, agent_url)", key)
 	}
 }

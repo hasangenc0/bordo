@@ -1,6 +1,6 @@
-# Binaries
-bordod
-bordo
+# Binaries (compiled outputs only — not matching the deploy/bordo/ directory)
+/bordod
+/bordo
 /bin/
 /dist/
 

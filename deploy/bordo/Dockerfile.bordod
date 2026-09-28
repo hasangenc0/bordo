@@ -1,0 +1,38 @@
+FROM golang:1.22-alpine AS build
+WORKDIR /workspace
+
+# Copy workspace files first for better layer caching
+COPY go.work go.work.sum ./
+
+# Copy all modules (needed by go.work)
+COPY agent/go.mod agent/go.sum ./agent/
+COPY build/go.mod build/go.sum ./build/
+COPY cli/go.mod cli/go.sum ./cli/
+COPY control-plane/go.mod control-plane/go.sum ./control-plane/
+COPY fleet/go.mod fleet/go.sum ./fleet/
+COPY observe/go.mod observe/go.sum ./observe/
+COPY release/go.mod release/go.sum ./release/
+COPY scripts/go.mod scripts/go.sum ./scripts/
+
+# Download deps
+RUN go work sync
+
+# Copy source
+COPY agent/ agent/
+COPY build/ build/
+COPY cli/ cli/
+COPY control-plane/ control-plane/
+COPY fleet/ fleet/
+COPY observe/ observe/
+COPY release/ release/
+COPY scripts/ scripts/
+
+RUN go build -ldflags="-s -w" -o /bordod ./control-plane/
+
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates wget kubectl docker-cli
+COPY --from=build /bordod /usr/local/bin/bordod
+COPY templates/ /templates/
+EXPOSE 7401
+ENTRYPOINT ["bordod"]
+CMD ["serve"]

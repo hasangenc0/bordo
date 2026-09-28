@@ -44,6 +44,14 @@ func (h *handler) trigger(w http.ResponseWriter, r *http.Request) {
 	if req.ImageTag == "" {
 		req.ImageTag = "latest"
 	}
+	// Derive image name from project name when not supplied.
+	if req.ImageName == "" {
+		var name string
+		row := h.store.db.QueryRowContext(r.Context(), `SELECT name FROM projects WHERE id = ?`, req.ProjectID)
+		if err := row.Scan(&name); err == nil && name != "" {
+			req.ImageName = name
+		}
+	}
 
 	b, err := h.store.Create(r.Context(), req.ProjectID, req.ImageName, req.ImageTag)
 	if err != nil {

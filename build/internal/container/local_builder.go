@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 )
 
 // LocalBuilder builds images using the local Docker daemon.
@@ -27,6 +28,12 @@ func dockerBin() string {
 	return "docker" // will fail with a clear "not found" error
 }
 
+// hasPlugin reports whether `bin <subcmd>` is available as a plugin.
+func hasPlugin(bin, subcmd string) bool {
+	cmd := exec.Command(bin, subcmd, "version")
+	return cmd.Run() == nil
+}
+
 func (b *LocalBuilder) Build(ctx context.Context, opts BuildOptions) (<-chan LogLine, error) {
 	if opts.Dockerfile == "" {
 		opts.Dockerfile = "Dockerfile"
@@ -35,30 +42,40 @@ func (b *LocalBuilder) Build(ctx context.Context, opts BuildOptions) (<-chan Log
 		opts.Tag = "latest"
 	}
 
-	imageRef := opts.RegistryURL + "/" + opts.ImageName + ":" + opts.Tag
-	if opts.RegistryURL == "" {
-		imageRef = opts.ImageName + ":" + opts.Tag
+	imageRef := opts.ImageName + ":" + opts.Tag
+	if opts.RegistryURL != "" {
+		imageRef = opts.RegistryURL + "/" + imageRef
 	}
 
-	// Use --load for local builds (no registry); --push when a registry is configured.
-	// --load loads the built image into the local daemon (works on Rancher Desktop).
-	var pushFlag string
-	if opts.RegistryURL == "" {
-		pushFlag = "--load"
-	} else {
-		pushFlag = "--push"
-	}
-
-	args := []string{
-		"buildx", "build",
-		"--file", opts.Dockerfile,
-		"--tag", imageRef,
-		pushFlag,
-		"--progress=plain",
-		opts.ContextPath,
+	// Dockerfile path must be absolute so it resolves correctly regardless of CWD.
+	dockerfilePath := opts.Dockerfile
+	if !filepath.IsAbs(dockerfilePath) {
+		dockerfilePath = filepath.Join(opts.ContextPath, dockerfilePath)
 	}
 
 	bin := dockerBin()
+
+	var args []string
+	if opts.RegistryURL != "" && hasPlugin(bin, "buildx") {
+		// Push to remote registry using buildx.
+		args = []string{
+			"buildx", "build",
+			"--file", dockerfilePath,
+			"--tag", imageRef,
+			"--push",
+			"--progress=plain",
+			opts.ContextPath,
+		}
+	} else {
+		// Local build — plain `docker build` loads into the daemon by default.
+		args = []string{
+			"build",
+			"--file", dockerfilePath,
+			"--tag", imageRef,
+			opts.ContextPath,
+		}
+	}
+
 	cmd := exec.CommandContext(ctx, bin, args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

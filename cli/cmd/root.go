@@ -29,6 +29,7 @@ func Root() *cobra.Command {
 		SecretCmd(),
 		DeployCmd(),
 		ObserveCmd(),
+		AgentCmd(),
 	)
 
 	return root

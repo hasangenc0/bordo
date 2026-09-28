@@ -79,7 +79,8 @@ func (e *Executor) run(ctx context.Context, buildID string) error {
 			_ = e.store.AppendLog(ctx, buildID, fmt.Sprintf("[bordo] scaffolding template %q", templateName))
 			eng := template.NewEngine(e.templateRoot)
 			vars := template.Vars{
-				ProjectName: b.ImageName,
+				ProjectName:  b.ImageName,
+				GroupId:      "io.bordo.apps",
 				BordoVersion: "0.1.0",
 			}
 			if expandErr := eng.Expand(templateName, vars, scaffoldDir); expandErr != nil {

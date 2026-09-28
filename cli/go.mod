@@ -11,6 +11,7 @@ require (
 require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
+	nhooyr.io/websocket v1.8.17 // indirect
 )
 
 replace github.com/bordo-io/bordo/build => ../build
