@@ -345,7 +345,7 @@ export function ServiceDetailPage({ onSendMessage }: Props) {
           <NavLink
             key={tab.path}
             to={`/services/${serviceName}/${tab.path}`}
-            className={({ isActive }) => `tab${isActive ? ' tab--active' : ''}`}
+            className={({ isActive }: { isActive: boolean }) => `tab${isActive ? ' tab--active' : ''}`}
           >
             {tab.label}
           </NavLink>

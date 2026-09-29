@@ -19,7 +19,7 @@ export function Sidebar() {
             <li key={item.to}>
               <NavLink
                 to={item.to}
-                className={({ isActive }) =>
+                className={({ isActive }: { isActive: boolean }) =>
                   `sidebar-item${isActive ? ' active' : ''}`
                 }
               >
@@ -34,7 +34,7 @@ export function Sidebar() {
       <div className="sidebar-bottom">
         <NavLink
           to="/settings"
-          className={({ isActive }) =>
+          className={({ isActive }: { isActive: boolean }) =>
             `sidebar-item${isActive ? ' active' : ''}`
           }
         >
