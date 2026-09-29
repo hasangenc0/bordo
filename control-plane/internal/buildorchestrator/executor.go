@@ -11,21 +11,24 @@ import (
 
 	"github.com/bordo-io/bordo/build/builder"
 	"github.com/bordo-io/bordo/build/template"
+	githubpkg "github.com/bordo-io/bordo/control-plane/internal/github"
 )
 
-// Executor runs the full build pipeline: scaffold → docker build → log.
+// Executor runs the full build pipeline: scaffold → build → log.
 type Executor struct {
 	store        *Store
 	logger       *slog.Logger
-	workDir      string // root dir for scaffold output; e.g. ~/.bordo/builds
-	templateRoot string // root dir of golden-path templates; e.g. <repo>/templates
-	registryURL  string // optional registry prefix for image refs
+	workDir      string
+	templateRoot string
+	registryURL  string
 	db           *sql.DB
+	ghStore      *githubpkg.Store // nil if GitHub App not configured
 }
 
 // NewExecutor creates an Executor. templateRoot and registryURL are read from
 // BORDO_TEMPLATE_ROOT and BORDO_REGISTRY env vars if the passed values are empty.
-func NewExecutor(store *Store, db *sql.DB, logger *slog.Logger, workDir, templateRoot, registryURL string) *Executor {
+// ghStore may be nil; when non-nil the executor uses GitHub Actions for builds.
+func NewExecutor(store *Store, db *sql.DB, logger *slog.Logger, workDir, templateRoot, registryURL string, ghStore *githubpkg.Store) *Executor {
 	if templateRoot == "" {
 		templateRoot = os.Getenv("BORDO_TEMPLATE_ROOT")
 	}
@@ -43,14 +46,14 @@ func NewExecutor(store *Store, db *sql.DB, logger *slog.Logger, workDir, templat
 		templateRoot: templateRoot,
 		registryURL:  registryURL,
 		db:           db,
+		ghStore:      ghStore,
 	}
 }
 
 // Execute runs the build pipeline for the given build ID asynchronously.
-// It returns immediately; the build result is persisted to the DB.
 func (e *Executor) Execute(buildID string) {
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
 		if err := e.run(ctx, buildID); err != nil {
 			e.logger.Error("build failed", "id", buildID, "err", err)
@@ -63,43 +66,91 @@ func (e *Executor) run(ctx context.Context, buildID string) error {
 	if err != nil {
 		return fmt.Errorf("get build %s: %w", buildID, err)
 	}
-
 	if err := e.store.SetRunning(ctx, buildID); err != nil {
 		return fmt.Errorf("set running: %w", err)
 	}
-
 	_ = e.store.AppendLog(ctx, buildID, "[bordo] build started")
 
 	scaffoldDir := filepath.Join(e.workDir, buildID, "src")
 
-	// Step 1: scaffold from template if a template root is configured.
+	// Step 1: scaffold from template.
 	if e.templateRoot != "" {
 		templateName := e.resolveTemplate(ctx, b.ProjectID)
 		if templateName != "" {
-			_ = e.store.AppendLog(ctx, buildID, fmt.Sprintf("[bordo] scaffolding template %q", templateName))
+			_ = e.store.AppendLog(ctx, buildID, fmt.Sprintf("[bordo] scaffolding %q", templateName))
 			eng := template.NewEngine(e.templateRoot)
 			vars := template.Vars{
 				ProjectName:  b.ImageName,
 				GroupId:      "io.bordo.apps",
 				BordoVersion: "0.1.0",
 			}
-			if expandErr := eng.Expand(templateName, vars, scaffoldDir); expandErr != nil {
-				_ = e.store.AppendLog(ctx, buildID, fmt.Sprintf("[bordo] scaffold failed: %v", expandErr))
-				// Not fatal: fall through and try to build whatever is in scaffoldDir.
+			if err := eng.Expand(templateName, vars, scaffoldDir); err != nil {
+				_ = e.store.AppendLog(ctx, buildID, fmt.Sprintf("[bordo] scaffold failed: %v", err))
 			} else {
 				_ = e.store.AppendLog(ctx, buildID, "[bordo] scaffold complete")
 			}
 		}
 	}
 
-	// If no scaffoldDir was created (no template root or scaffold failed), nothing to build.
 	if _, statErr := os.Stat(filepath.Join(scaffoldDir, "Dockerfile")); os.IsNotExist(statErr) {
-		_ = e.store.AppendLog(ctx, buildID, "[bordo] no Dockerfile found — skipping docker build (set BORDO_TEMPLATE_ROOT)")
+		_ = e.store.AppendLog(ctx, buildID, "[bordo] no Dockerfile found — skipping build")
 		return e.store.UpdateStatus(ctx, buildID, "success", "", "")
 	}
 
-	// Step 2: docker buildx build.
-	_ = e.store.AppendLog(ctx, buildID, "[bordo] starting docker build")
+	// Step 2: resolve GitHub repo for this project (if App is configured).
+	if e.ghStore != nil {
+		repoURL := e.resolveRepoURL(ctx, b.ProjectID)
+		if repoURL != "" {
+			return e.buildViaGitHubActions(ctx, buildID, b, scaffoldDir, repoURL)
+		}
+	}
+
+	// Fallback: local Docker build.
+	return e.buildLocally(ctx, buildID, b, scaffoldDir)
+}
+
+// buildViaGitHubActions pushes the scaffold to GitHub and waits for the workflow.
+func (e *Executor) buildViaGitHubActions(ctx context.Context, buildID string, b *Build, scaffoldDir, repoURL string) error {
+	owner, repo, err := githubpkg.ParseRepoURL(repoURL)
+	if err != nil {
+		_ = e.store.AppendLog(ctx, buildID, fmt.Sprintf("[error] bad repo URL %q: %v", repoURL, err))
+		return e.buildLocally(ctx, buildID, b, scaffoldDir)
+	}
+
+	token, err := e.githubToken(ctx)
+	if err != nil || token == "" {
+		_ = e.store.AppendLog(ctx, buildID, fmt.Sprintf("[bordo] no GitHub token — falling back to local build: %v", err))
+		return e.buildLocally(ctx, buildID, b, scaffoldDir)
+	}
+
+	_ = e.store.AppendLog(ctx, buildID, fmt.Sprintf("[bordo] pushing scaffold to github.com/%s/%s", owner, repo))
+	commitSHA, err := githubpkg.PushScaffoldToRepo(ctx, token, owner, repo, scaffoldDir)
+	if err != nil {
+		_ = e.store.AppendLog(ctx, buildID, fmt.Sprintf("[error] git push failed: %v", err))
+		return e.store.UpdateStatus(ctx, buildID, "failed", "", err.Error())
+	}
+	_ = e.store.AppendLog(ctx, buildID, fmt.Sprintf("[bordo] pushed commit %s — waiting for GitHub Actions", commitSHA[:8]))
+
+	run, err := githubpkg.WaitForWorkflowRun(ctx, token, owner, repo, commitSHA)
+	if err != nil {
+		_ = e.store.AppendLog(ctx, buildID, fmt.Sprintf("[error] waiting for workflow: %v", err))
+		return e.store.UpdateStatus(ctx, buildID, "failed", "", err.Error())
+	}
+
+	imageRef := fmt.Sprintf("ghcr.io/%s/%s:%s", owner, repo, commitSHA)
+	_ = e.store.AppendLog(ctx, buildID, fmt.Sprintf("[bordo] workflow %s → %s", run.HTMLURL, run.Conclusion))
+
+	if run.Conclusion != "success" {
+		msg := fmt.Sprintf("GitHub Actions workflow %s", run.Conclusion)
+		return e.store.UpdateStatus(ctx, buildID, "failed", imageRef, msg)
+	}
+	_ = e.store.AppendLog(ctx, buildID, fmt.Sprintf("[bordo] image available: %s", imageRef))
+	return e.store.UpdateStatus(ctx, buildID, "success", imageRef, "")
+}
+
+// buildLocally runs a Docker build on the local daemon (requires Docker socket).
+func (e *Executor) buildLocally(ctx context.Context, buildID string, b *Build, scaffoldDir string) error {
+	_ = e.store.AppendLog(ctx, buildID, "[bordo] starting local docker build")
 	bldr := builder.NewLocalBuilder()
 	logCh, err := bldr.Build(ctx, builder.BuildOptions{
 		ProjectID:   b.ProjectID,
@@ -109,7 +160,7 @@ func (e *Executor) run(ctx context.Context, buildID string) error {
 		RegistryURL: e.registryURL,
 	})
 	if err != nil {
-		msg := fmt.Sprintf("docker build start failed: %v", err)
+		msg := fmt.Sprintf("docker build failed to start: %v", err)
 		_ = e.store.AppendLog(ctx, buildID, "[error] "+msg)
 		return e.store.UpdateStatus(ctx, buildID, "failed", "", msg)
 	}
@@ -120,18 +171,34 @@ func (e *Executor) run(ctx context.Context, buildID string) error {
 		lastLine = line.Text
 	}
 
-	// Detect failure from the last log line written by LocalBuilder.
 	if len(lastLine) >= 7 && lastLine[:7] == "[error]" {
 		return e.store.UpdateStatus(ctx, buildID, "failed", "", lastLine)
 	}
-
 	imageRef := b.ImageRef(e.registryURL)
 	_ = e.store.AppendLog(ctx, buildID, fmt.Sprintf("[bordo] build complete: %s", imageRef))
 	return e.store.UpdateStatus(ctx, buildID, "success", imageRef, "")
 }
 
+// githubToken returns a fresh installation token for pushing to GitHub.
+func (e *Executor) githubToken(ctx context.Context) (string, error) {
+	creds, err := e.ghStore.LoadApp(ctx)
+	if err != nil || creds == nil {
+		return "", err
+	}
+	installID, _, _, err := e.ghStore.LoadInstallationID(ctx)
+	if err != nil || installID == 0 {
+		// Try user token as fallback.
+		userToken, _, err2 := e.ghStore.LoadUserToken(ctx)
+		return userToken, err2
+	}
+	jwtToken, err := githubpkg.GenerateJWT(creds.AppID, creds.PrivateKeyPEM)
+	if err != nil {
+		return "", err
+	}
+	return githubpkg.GetInstallationToken(jwtToken, installID)
+}
+
 // resolveTemplate looks up the project's template name from the DB.
-// Returns "" if unavailable or the table doesn't have the column yet.
 func (e *Executor) resolveTemplate(ctx context.Context, projectID string) string {
 	var templateName string
 	row := e.db.QueryRowContext(ctx, `SELECT template FROM projects WHERE id = ?`, projectID)
@@ -139,4 +206,14 @@ func (e *Executor) resolveTemplate(ctx context.Context, projectID string) string
 		return ""
 	}
 	return templateName
+}
+
+// resolveRepoURL looks up the project's git_repo_url from the DB.
+func (e *Executor) resolveRepoURL(ctx context.Context, projectID string) string {
+	var repoURL string
+	row := e.db.QueryRowContext(ctx, `SELECT git_repo_url FROM projects WHERE id = ?`, projectID)
+	if err := row.Scan(&repoURL); err != nil {
+		return ""
+	}
+	return repoURL
 }

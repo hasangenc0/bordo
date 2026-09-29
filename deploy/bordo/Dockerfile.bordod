@@ -30,7 +30,10 @@ COPY scripts/ scripts/
 RUN go build -ldflags="-s -w" -o /bordod ./control-plane/
 
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates wget kubectl docker-cli
+# git is required for pushing scaffolded code to GitHub repos.
+# kubectl is kept for future fleet management.
+# docker-cli removed: builds now run in GitHub Actions, not on the VPS.
+RUN apk add --no-cache ca-certificates wget kubectl git
 COPY --from=build /bordod /usr/local/bin/bordod
 COPY templates/ /templates/
 EXPOSE 7401

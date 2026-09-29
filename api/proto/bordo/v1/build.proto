@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package bordo.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/bordo-io/bordo/api/proto/bordo/v1;bordov1";
+
+// Build represents a container build job.
+message Build {
+  string id = 1;
+  string project_id = 2;
+  string project_name = 3;
+  // status: queued | running | success | failed
+  string status = 4;
+  string image_name = 5;
+  string image_tag = 6;
+  string image_digest = 7;
+  string error_message = 8;
+  google.protobuf.Timestamp started_at = 9;
+  google.protobuf.Timestamp completed_at = 10;
+}
+
+message TriggerBuildRequest {
+  string project_id = 1;
+  string context_path = 2;
+  string dockerfile = 3;
+  string tag = 4;
+  string registry_url = 5;
+}
+
+message TriggerBuildResponse {
+  Build build = 1;
+}
+
+message GetBuildStatusRequest {
+  string build_id = 1;
+}
+
+message GetBuildStatusResponse {
+  Build build = 1;
+}
+
+message ListBuildsRequest {
+  string project_id = 1;
+}
+
+message ListBuildsResponse {
+  repeated Build builds = 1;
+}
+
+message StreamBuildLogsRequest {
+  string build_id = 1;
+}
+
+message LogLine {
+  string text = 1;
+  google.protobuf.Timestamp timestamp = 2;
+}
+
+// BuildService manages container builds.
+service BuildService {
+  rpc TriggerBuild(TriggerBuildRequest) returns (TriggerBuildResponse);
+  rpc GetBuildStatus(GetBuildStatusRequest) returns (GetBuildStatusResponse);
+  rpc ListBuilds(ListBuildsRequest) returns (ListBuildsResponse);
+  rpc StreamBuildLogs(StreamBuildLogsRequest) returns (stream LogLine);
+}

@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package bordo.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/bordo-io/bordo/api/proto/bordo/v1;bordov1";
+
+// Project represents a software project managed by Bordo.
+message Project {
+  string id = 1;
+  string name = 2;
+  string template = 3;
+  string git_repo_url = 4;
+  // status is one of: pending, active, error
+  string status = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+// CreateProjectRequest creates a new project.
+message CreateProjectRequest {
+  string name = 1;
+  string template = 2;
+}
+
+message CreateProjectResponse {
+  Project project = 1;
+}
+
+// GetProjectRequest retrieves a project by ID.
+message GetProjectRequest {
+  string id = 1;
+}
+
+message GetProjectResponse {
+  Project project = 1;
+}
+
+// ListProjectsRequest lists all projects.
+message ListProjectsRequest {}
+
+message ListProjectsResponse {
+  repeated Project projects = 1;
+}
+
+// DeleteProjectRequest removes a project.
+message DeleteProjectRequest {
+  string id = 1;
+}
+
+message DeleteProjectResponse {}
+
+// ProjectService manages Bordo projects.
+service ProjectService {
+  rpc CreateProject(CreateProjectRequest) returns (CreateProjectResponse);
+  rpc GetProject(GetProjectRequest) returns (GetProjectResponse);
+  rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
+  rpc DeleteProject(DeleteProjectRequest) returns (DeleteProjectResponse);
+}

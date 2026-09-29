@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package bordo.v1;
+
+option go_package = "github.com/bordo-io/bordo/api/proto/bordo/v1;bordov1";
+
+// BordoService is the root service for the Bordo control plane.
+// NOTE: protoc/buf are not yet in the toolchain; this file is a human-readable
+// specification. The REST API (implemented in control-plane/internal/server/)
+// is the authoritative interface until gRPC stubs are generated.
+service BordoService {
+  // Ping returns a pong to verify connectivity.
+  rpc Ping(PingRequest) returns (PingResponse);
+
+  // Version returns the server version information.
+  rpc Version(VersionRequest) returns (VersionResponse);
+}
+
+message PingRequest {}
+
+message PingResponse {
+  bool ok = 1;
+}
+
+message VersionRequest {}
+
+message VersionResponse {
+  string version    = 1;
+  string commit     = 2;
+  string build_time = 3;
+}
