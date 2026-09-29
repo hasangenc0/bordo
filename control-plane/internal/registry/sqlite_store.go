@@ -88,6 +88,74 @@ func (s *sqliteStore) DeleteProject(ctx context.Context, id string) error {
 	return nil
 }
 
+func (s *sqliteStore) GetLatestReleaseInfo(ctx context.Context, projectID string) (status, region string, found bool, err error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT status, region FROM bordo_releases
+		 WHERE project_id = ?
+		 ORDER BY created_at DESC LIMIT 1`, projectID)
+	err = row.Scan(&status, &region)
+	if err == sql.ErrNoRows {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, fmt.Errorf("get latest release info: %w", err)
+	}
+	return status, region, true, nil
+}
+
+func (s *sqliteStore) GetEnvVars(ctx context.Context, projectID string) ([]*EnvVar, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT name, value, secret FROM bordo_project_env
+		 WHERE project_id = ? ORDER BY name`, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("get env vars: %w", err)
+	}
+	defer rows.Close()
+
+	var vars []*EnvVar
+	for rows.Next() {
+		var v EnvVar
+		var secretInt int
+		if err := rows.Scan(&v.Name, &v.Value, &secretInt); err != nil {
+			return nil, fmt.Errorf("scan env var: %w", err)
+		}
+		v.Secret = secretInt != 0
+		vars = append(vars, &v)
+	}
+	return vars, rows.Err()
+}
+
+func (s *sqliteStore) SetEnvVars(ctx context.Context, projectID string, vars []*EnvVar) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// Replace all env vars for this project.
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM bordo_project_env WHERE project_id = ?`, projectID); err != nil {
+		return fmt.Errorf("delete env vars: %w", err)
+	}
+
+	now := time.Now().UTC()
+	for _, v := range vars {
+		secretInt := 0
+		if v.Secret {
+			secretInt = 1
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO bordo_project_env (id, project_id, name, value, secret, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			uuid.NewString(), projectID, v.Name, v.Value, secretInt, now, now,
+		); err != nil {
+			return fmt.Errorf("insert env var %q: %w", v.Name, err)
+		}
+	}
+
+	return tx.Commit()
+}
+
 func scanProject(row *sql.Row) (*Project, error) {
 	p := &Project{}
 	err := row.Scan(&p.ID, &p.Name, &p.Template, &p.GitRepoURL, &p.Status, &p.CreatedAt, &p.UpdatedAt)

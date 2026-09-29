@@ -1,11 +1,6 @@
 name: ts-react-app
-description: Vite + React + TypeScript SPA, pre-wired for Bordo auth, OTel browser tracing
-runtime: node
-variables:
-  - name: ProjectName
-    description: The npm package name and app title (e.g. my-frontend)
-    required: true
-    default: my-frontend
-health:
-  path: /health
-  port: 80
+description: React + TypeScript frontend app with Vite
+category: Frontend
+icon: "⚛"
+author: Bordo Official
+variables: []
