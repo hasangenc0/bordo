@@ -24,9 +24,9 @@ services:
       # - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       # - BORDO_REGISTRY=${BORDO_REGISTRY}
       # Tune Go GC to be more aggressive: halves heap headroom, saves ~20 MB.
-      - GOGC=50
-    mem_limit: 192m
-    memswap_limit: 192m
+      - GOGC=100
+    mem_limit: 512m
+    memswap_limit: 512m
     volumes:
       - bordod-data:/data
     healthcheck:
@@ -54,9 +54,9 @@ services:
       # Uncomment below only to override it without going through the wizard.
       # - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - BORDO_CHAT_DB=/data/agent-chats.db
-      - GOGC=50
-    mem_limit: 256m
-    memswap_limit: 256m
+      - GOGC=100
+    mem_limit: 512m
+    memswap_limit: 512m
     volumes:
       - agent-data:/data
     depends_on:
@@ -75,8 +75,8 @@ services:
       # nginx uses this to add Authorization headers when proxying to the agent.
       # No Node.js BFF — nginx proxies directly to bordo-agent on the Docker network.
       - BORDO_AGENT_TOKEN=${BORDO_INTERNAL_TOKEN}
-    mem_limit: 32m
-    memswap_limit: 32m
+    mem_limit: 64m
+    memswap_limit: 64m
     depends_on:
       - bordo-agent
     restart: unless-stopped
