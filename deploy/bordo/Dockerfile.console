@@ -6,7 +6,7 @@ COPY console/package.json console/package-lock.json ./
 # Both workspace package.jsons needed so npm ci can resolve them
 COPY console/frontend/package.json ./frontend/
 COPY console/bff/package.json ./bff/
-RUN npm ci
+RUN npm install --prefer-offline --no-audit --no-fund
 # Copy frontend source and build
 COPY console/frontend/ ./frontend/
 RUN npm run build --workspace=frontend
