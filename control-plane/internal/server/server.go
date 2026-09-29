@@ -19,6 +19,8 @@ import (
 	"github.com/bordo-io/bordo/control-plane/internal/registry"
 	"github.com/bordo-io/bordo/control-plane/internal/release"
 	"github.com/bordo-io/bordo/control-plane/internal/secrets"
+	"github.com/bordo-io/bordo/control-plane/internal/settings"
+	"github.com/bordo-io/bordo/control-plane/internal/setup"
 	"github.com/bordo-io/bordo/control-plane/internal/store"
 	"github.com/bordo-io/bordo/control-plane/internal/version"
 	"github.com/go-chi/chi/v5"
@@ -35,15 +37,50 @@ type Server struct {
 	secretKey         [32]byte
 	releaseController *release.Controller
 	githubHandler     *githubpkg.Handler
+	ghStore           *githubpkg.Store
+	settingsStore     *settings.Store
+	setupHandler      *setup.Handler
 }
 
 // New creates a Server wired with all routes.
 func New(cfg *config.Config, logger *slog.Logger, db *sql.DB) *Server {
 	secretKey, err := secrets.DeriveKey()
 	if err != nil {
-		// Non-fatal: log the error and use the zero key (secrets will be unusable but server still starts).
 		logger.Warn("secrets: could not derive encryption key, secrets disabled", "error", err)
 	}
+
+	settingsStore, err := settings.New(db, cfg.Store.Path)
+	if err != nil {
+		logger.Warn("settings store unavailable", "error", err)
+	}
+
+	// Overlay settings-store values onto cfg so the rest of the server
+	// can read them without knowing where they came from.
+	if settingsStore != nil {
+		if v := settingsStore.GetOrDefault(settings.KeyAdminToken, ""); v != "" && cfg.Server.AuthToken == "" {
+			cfg.Server.AuthToken = v
+		}
+		if v := settingsStore.GetOrDefault(settings.KeyBaseURL, ""); v != "" && cfg.Server.BaseURL == "" {
+			cfg.Server.BaseURL = v
+		}
+	}
+
+	setupHdlr, err := setup.New(settingsStore, logger)
+	if err != nil {
+		logger.Error("setup handler unavailable", "error", err)
+	}
+
+	// On first run, print the one-time setup token so the admin can complete setup.
+	if settingsStore != nil && setupHdlr != nil {
+		if configured, _ := settingsStore.IsConfigured(); !configured {
+			logger.Warn("BORDO NOT CONFIGURED — complete setup to start using Bordo",
+				"setup_url", cfg.Server.GetBaseURL()+"/setup/status",
+				"setup_token", setupHdlr.SetupToken(),
+				"cli_hint", "bordo setup --server "+cfg.Server.GetBaseURL(),
+			)
+		}
+	}
+
 	ghStore := githubpkg.NewStore(db, secretKey)
 	s := &Server{
 		cfg:               cfg,
@@ -51,8 +88,11 @@ func New(cfg *config.Config, logger *slog.Logger, db *sql.DB) *Server {
 		db:                db,
 		router:            chi.NewRouter(),
 		secretKey:         secretKey,
-		releaseController: release.NewController(db, logger),
+		releaseController: release.NewController(db, logger, ghStore),
 		githubHandler:     githubpkg.NewHandler(ghStore, cfg.Server.GetBaseURL()),
+		ghStore:           ghStore,
+		settingsStore:     settingsStore,
+		setupHandler:      setupHdlr,
 	}
 	s.registerMiddleware()
 	s.registerRoutes()
@@ -116,22 +156,62 @@ func (s *Server) registerMiddleware() {
 	s.router.Use(middleware.Recoverer)
 }
 
+// requireToken returns a middleware that enforces bearer-token auth.
+// The token is re-read from the settings store on every request so setup
+// does not require a server restart.
+func (s *Server) requireToken() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			token := s.activeAdminToken()
+			if token == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if r.Header.Get("Authorization") == "Bearer "+token {
+				next.ServeHTTP(w, r)
+				return
+			}
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		})
+	}
+}
+
+// activeAdminToken returns the current admin token, preferring the settings
+// store over the static config value (set via env var).
+func (s *Server) activeAdminToken() string {
+	if s.settingsStore != nil {
+		if v := s.settingsStore.GetOrDefault(settings.KeyAdminToken, ""); v != "" {
+			return v
+		}
+	}
+	return s.cfg.Server.AuthToken
+}
+
 // registerRoutes wires all API routes.
 func (s *Server) registerRoutes() {
-	// Health / readiness probes (used by k8s and load balancers).
+	// Health / readiness probes — always public (used by load balancers).
 	s.router.Get("/healthz", s.handleHealthz)
 	s.router.Get("/readyz", s.handleReadyz)
 	s.router.Get("/version", s.handleVersion)
 
-	// GitHub App setup + OAuth callbacks (must be reachable before /v1 auth).
+	// Setup wizard — public, no auth required.
+	// POST /setup is a one-time endpoint protected only by the setup token.
+	if s.setupHandler != nil {
+		s.router.Get("/setup/status", s.setupHandler.HandleStatus)
+		s.router.Post("/setup", s.setupHandler.HandleSetup)
+	}
+
+	// GitHub App OAuth callbacks — must be reachable by the admin's browser
+	// after GitHub redirects; no token needed (the user is on VPN).
 	s.router.Mount("/github", s.githubHandler.Routes())
 
-	// Versioned API — route groups hang off /v1.
+	// Versioned API — protected by bearer token when BORDO_AUTH_TOKEN is set.
 	s.router.Route("/v1", func(r chi.Router) {
+		r.Use(s.requireToken())
 		r.Mount("/projects", registry.NewHandler(registry.New(s.db)))
-		r.Mount("/regions", fleet.NewHandler(fleet.New(s.db)))
+		r.Mount("/regions", fleet.NewHandler(fleet.New(s.db), s.logger))
 		buildStore := buildorchestrator.New(s.db)
-		buildExecutor := buildorchestrator.NewExecutor(buildStore, s.db, s.logger, "", "", "")
+		buildExecutor := buildorchestrator.NewExecutor(buildStore, s.db, s.logger, "", "", "", s.ghStore)
 		r.Mount("/builds", buildorchestrator.NewHandler(buildStore, buildExecutor))
 		r.Mount("/releases", release.NewHandler(s.db))
 
@@ -148,10 +228,19 @@ func (s *Server) registerRoutes() {
 		r.Get("/observe/traces/{traceID}", observeHandler.QueryTrace)
 
 		r.Get("/templates", s.handleListTemplates)
+		r.Get("/fleet", s.handleFleetOverview)
 
 		// GitHub App integration helpers.
 		r.Get("/github/token", s.handleGithubToken)
 		r.Get("/github/status", s.handleGithubStatus)
+
+		// Platform settings — update a single key (admin only).
+		if s.setupHandler != nil {
+			r.Post("/settings", s.setupHandler.HandleUpdateSetting)
+		}
+
+		// Runtime config endpoint for the agent — returns LLM provider config.
+		r.Get("/runtime-config", s.handleRuntimeConfig)
 	})
 }
 
@@ -214,6 +303,88 @@ func (s *Server) handleGithubToken(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGithubStatus(w http.ResponseWriter, r *http.Request) {
 	// Delegate to the github handler's status logic by forwarding internally.
 	s.githubHandler.ServeStatus(w, r)
+}
+
+func (s *Server) handleRuntimeConfig(w http.ResponseWriter, r *http.Request) {
+	type runtimeConfig struct {
+		DeepSeekAPIKey string `json:"deepseek_api_key,omitempty"`
+		LLMModel       string `json:"llm_model,omitempty"`
+		LLMURL         string `json:"llm_url,omitempty"`
+		RegistryURL    string `json:"registry_url,omitempty"`
+		BaseURL        string `json:"base_url,omitempty"`
+	}
+	cfg := runtimeConfig{
+		LLMModel: "deepseek-chat",
+	}
+	if s.settingsStore != nil {
+		cfg.DeepSeekAPIKey = s.settingsStore.GetOrDefault(settings.KeyDeepSeekKey, "")
+		cfg.LLMModel = s.settingsStore.GetOrDefault(settings.KeyLLMModel, cfg.LLMModel)
+		cfg.LLMURL = s.settingsStore.GetOrDefault(settings.KeyLLMURL, "")
+		cfg.RegistryURL = s.settingsStore.GetOrDefault(settings.KeyRegistryURL, "")
+		cfg.BaseURL = s.settingsStore.GetOrDefault(settings.KeyBaseURL, "")
+	}
+	writeJSON(w, http.StatusOK, cfg)
+}
+
+func (s *Server) handleFleetOverview(w http.ResponseWriter, r *http.Request) {
+	type deployment struct {
+		ProjectID string `json:"project_id"`
+		ImageTag  string `json:"image_tag"`
+		Status    string `json:"status"`
+		Region    string `json:"region"`
+	}
+	type regionOverview struct {
+		Name        string       `json:"name"`
+		Status      string       `json:"status"`
+		Deployments []deployment `json:"deployments"`
+	}
+
+	rows, err := s.db.QueryContext(r.Context(), `SELECT name, status FROM regions ORDER BY name`)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	var regions []regionOverview
+	for rows.Next() {
+		var ro regionOverview
+		if err := rows.Scan(&ro.Name, &ro.Status); err != nil {
+			continue
+		}
+		ro.Deployments = []deployment{}
+		regions = append(regions, ro)
+	}
+	rows.Close()
+
+	// Fetch latest release per project per region.
+	relRows, err := s.db.QueryContext(r.Context(),
+		`SELECT project_id, image_tag, status, region FROM bordo_releases
+		 WHERE id IN (
+		   SELECT id FROM bordo_releases r2
+		   WHERE r2.region = bordo_releases.region AND r2.project_id = bordo_releases.project_id
+		   ORDER BY created_at DESC LIMIT 1
+		 )`)
+	if err == nil {
+		defer relRows.Close()
+		deploysByRegion := map[string][]deployment{}
+		for relRows.Next() {
+			var d deployment
+			if err := relRows.Scan(&d.ProjectID, &d.ImageTag, &d.Status, &d.Region); err == nil {
+				deploysByRegion[d.Region] = append(deploysByRegion[d.Region], d)
+			}
+		}
+		for i := range regions {
+			if deps, ok := deploysByRegion[regions[i].Name]; ok {
+				regions[i].Deployments = deps
+			}
+		}
+	}
+
+	if regions == nil {
+		regions = []regionOverview{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"regions": regions})
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

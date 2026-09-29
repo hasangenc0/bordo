@@ -103,11 +103,29 @@ func (s *Store) ListRegions(ctx context.Context) ([]*Region, error) {
 	return regions, rows.Err()
 }
 
-// UpdateRegionStatus updates the health status of a region.
+// UpdateRegionStatus updates the health status of a region by ID.
 func (s *Store) UpdateRegionStatus(ctx context.Context, id, status string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE regions SET status = ?, updated_at = ? WHERE id = ?`,
 		status, time.Now().UTC(), id,
+	)
+	return err
+}
+
+// UpdateRegionStatusByName updates the health status of a region by name.
+func (s *Store) UpdateRegionStatusByName(ctx context.Context, name, status string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE regions SET status = ?, updated_at = ? WHERE name = ?`,
+		status, time.Now().UTC(), name,
+	)
+	return err
+}
+
+// UpdateKubeconfig sets the kubeconfig and status for a region identified by name.
+func (s *Store) UpdateKubeconfig(ctx context.Context, name, kubeconfig, status string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE regions SET kubeconfig = ?, status = ?, updated_at = ? WHERE name = ?`,
+		kubeconfig, status, time.Now().UTC(), name,
 	)
 	return err
 }

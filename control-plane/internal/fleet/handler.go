@@ -1,10 +1,13 @@
 package fleet
 
 import (
+	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -19,20 +22,22 @@ type addRegionRequest struct {
 }
 
 // NewHandler returns a chi router for the /regions REST API.
-func NewHandler(store *Store) http.Handler {
+func NewHandler(store *Store, logger *slog.Logger) http.Handler {
 	r := chi.NewRouter()
-	h := &handler{store: store}
+	h := &handler{store: store, logger: logger}
 	r.Post("/", h.add)
 	r.Get("/", h.list)
 	r.Get("/{id}", h.get)
 	r.Delete("/{id}", h.remove)
+	r.Post("/{name}/bootstrap", h.bootstrap)
 	r.Post("/{name}/health", h.reportHealth)
 	r.Get("/{name}/health", h.getHealth)
 	return r
 }
 
 type handler struct {
-	store *Store
+	store  *Store
+	logger *slog.Logger
 }
 
 // NodeHealth is a single node's reported health.
@@ -170,6 +175,61 @@ func (h *handler) remove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type bootstrapRequest struct {
+	Host   string `json:"host"`
+	Port   int    `json:"port"`
+	User   string `json:"user"`
+	SSHKey string `json:"ssh_key"`
+}
+
+func (h *handler) bootstrap(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	var req bootstrapRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Host == "" || req.SSHKey == "" {
+		writeErr(w, http.StatusBadRequest, "host and ssh_key are required")
+		return
+	}
+
+	// Ensure region exists; create if needed.
+	if _, err := h.store.GetRegionByName(r.Context(), name); errors.Is(err, ErrNotFound) {
+		if _, err2 := h.store.AddRegion(r.Context(), name, ""); err2 != nil {
+			writeErr(w, http.StatusInternalServerError, "could not create region")
+			return
+		}
+	}
+	_ = h.store.UpdateRegionStatusByName(r.Context(), name, "bootstrapping")
+
+	cfg := BootstrapConfig{
+		Host:       req.Host,
+		Port:       req.Port,
+		User:       req.User,
+		SSHKey:     req.SSHKey,
+		RegionName: name,
+	}
+
+	go func() {
+		ctx := context.Background()
+		var logBuf bytes.Buffer
+		kubeconfig, err := bootstrapK3s(ctx, cfg, &logBuf)
+		if err != nil {
+			h.logger.Error("bootstrap failed", "region", name, "err", err, "log", logBuf.String())
+			_ = h.store.UpdateRegionStatusByName(ctx, name, "unreachable")
+			return
+		}
+		if err := h.store.UpdateKubeconfig(ctx, name, kubeconfig, "healthy"); err != nil {
+			h.logger.Error("bootstrap: failed to save kubeconfig", "region", name, "err", err)
+			return
+		}
+		h.logger.Info("bootstrap complete", "region", name)
+	}()
+
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "bootstrapping", "region": name})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

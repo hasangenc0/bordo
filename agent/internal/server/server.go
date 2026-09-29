@@ -53,6 +53,23 @@ func Run(ctx context.Context, cfg Config) error {
 	cpToken := os.Getenv("BORDO_TOKEN")
 	cpClient := tools.NewCPClient(cpURL, cpToken)
 
+	// Fetch LLM config from bordod if not already set via env.
+	// This lets the admin configure the AI key once via the setup wizard
+	// rather than needing it in docker-compose env vars.
+	if cfg.APIKey == "" {
+		if rc, err := fetchRuntimeConfig(cpURL, cpToken); err == nil {
+			if cfg.APIKey == "" {
+				cfg.APIKey = rc.DeepSeekAPIKey
+			}
+			if os.Getenv("BORDO_LLM_MODEL") == "" && rc.LLMModel != "" {
+				os.Setenv("BORDO_LLM_MODEL", rc.LLMModel)
+			}
+			if os.Getenv("BORDO_LLM_URL") == "" && rc.LLMURL != "" {
+				os.Setenv("BORDO_LLM_URL", rc.LLMURL)
+			}
+		}
+	}
+
 	chatDBPath := os.Getenv("BORDO_CHAT_DB")
 	if chatDBPath == "" {
 		home, _ := os.UserHomeDir()
@@ -78,6 +95,24 @@ func Run(ctx context.Context, cfg Config) error {
 
 	s.router.Use(middleware.RequestID)
 	s.router.Use(middleware.Recoverer)
+
+	agentToken := os.Getenv("BORDO_AGENT_TOKEN")
+	s.router.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if agentToken == "" || r.URL.Path == "/healthz" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			// Accept token via Authorization header or ?token= query param
+			// (query param lets the browser WebSocket connect without custom headers).
+			tok := r.Header.Get("Authorization")
+			if tok == "Bearer "+agentToken || r.URL.Query().Get("token") == agentToken {
+				next.ServeHTTP(w, r)
+				return
+			}
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		})
+	})
 
 	s.router.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -382,6 +417,35 @@ func (s *Server) handleCallTool(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, MCPResponse{Result: result})
 }
 
+
+type runtimeConfig struct {
+	DeepSeekAPIKey string `json:"deepseek_api_key"`
+	LLMModel       string `json:"llm_model"`
+	LLMURL         string `json:"llm_url"`
+}
+
+func fetchRuntimeConfig(cpURL, token string) (*runtimeConfig, error) {
+	req, err := http.NewRequest(http.MethodGet, cpURL+"/v1/runtime-config", nil)
+	if err != nil {
+		return nil, err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("runtime-config: status %d", resp.StatusCode)
+	}
+	var rc runtimeConfig
+	if err := json.NewDecoder(resp.Body).Decode(&rc); err != nil {
+		return nil, err
+	}
+	return &rc, nil
+}
 
 func newLogger(level string) *slog.Logger {
 	var lvl slog.Level

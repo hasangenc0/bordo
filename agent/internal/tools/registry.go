@@ -26,6 +26,8 @@ func NewBordoToolRegistry(cp *CPClient) *ToolRegistry {
 	r.Register(deployListTool(cp))
 	r.Register(deployTool(cp))
 	r.Register(deployStatusTool(cp))
+	r.Register(deployGroupStatusTool(cp))
+	r.Register(deployLogsTool(cp))
 	r.Register(rollbackTool(cp))
 
 	// Observe tools (stub until BRD-030)
@@ -35,6 +37,9 @@ func NewBordoToolRegistry(cp *CPClient) *ToolRegistry {
 	// Region / fleet tools
 	r.Register(regionListTool(cp))
 	r.Register(regionAddTool(cp))
+	r.Register(regionBootstrapTool(cp))
+	r.Register(regionHealthTool(cp))
+	r.Register(fleetOverviewTool(cp))
 
 	// GitHub integration
 	r.Register(githubCreateRepoTool(cp))
