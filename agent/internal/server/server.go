@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/bordo-io/bordo/agent/internal/chatstore"
@@ -38,6 +40,7 @@ type Server struct {
 	anthropic *AnthropicClient
 	upgrader  websocket.Upgrader
 	chats     *chatstore.Store
+	cpClient  *tools.CPClient
 }
 
 // Run creates and starts the server, blocking until ctx is cancelled.
@@ -88,6 +91,7 @@ func Run(ctx context.Context, cfg Config) error {
 		tools:     tools.NewBordoToolRegistry(cpClient),
 		anthropic: NewAnthropicClient(cfg.APIKey),
 		chats:     chatDB,
+		cpClient:  cpClient,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
@@ -119,7 +123,10 @@ func Run(ctx context.Context, cfg Config) error {
 	})
 	s.router.Get("/ws/chat", s.handleChat)
 	s.router.Get("/sessions", s.handleListSessions)
+	// MCP endpoints
+	s.router.Get("/mcp", s.handleMCPManifest)
 	s.router.Post("/mcp", s.handleMCP)
+	s.router.Post("/mcp/call", s.handleMCPCall)
 	s.router.Get("/mcp/tools", s.handleListTools)
 	s.router.Post("/mcp/tools/{name}", s.handleCallTool)
 
@@ -129,6 +136,13 @@ func Run(ctx context.Context, cfg Config) error {
 	s.router.Get("/chats/{id}", s.handleGetChat)
 	s.router.Delete("/chats/{id}", s.handleDeleteChat)
 	s.router.Put("/chats/{id}/title", s.handleUpdateChatTitle)
+
+	// Approval shortcuts (proxy to control plane)
+	s.router.Post("/approvals/{id}/approve", s.makeApprovalHandler("approve"))
+	s.router.Post("/approvals/{id}/reject", s.makeApprovalHandler("reject"))
+
+	// Passthrough proxy: all /v1/* requests go to the control plane
+	s.router.Mount("/v1", s.handleCPProxy())
 
 	s.http = &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
@@ -259,7 +273,19 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 				if tool == nil {
 					return nil, fmt.Errorf("unknown tool: %s", name)
 				}
-				return tool.Call(ctx, input)
+				result, err := tool.Call(ctx, input)
+				// Emit action event after tool execution.
+				ae := ActionEvent{
+					Type:         "action",
+					ActionID:     uuid.New().String(),
+					ActionKind:   actionKindFromTool(name),
+					ActionTarget: actionTargetFromInput(input),
+					ActionStatus: "auto_approved",
+					ActionTs:     time.Now().UnixMilli(),
+				}
+				b, _ := json.Marshal(ae)
+				_ = conn.WriteMessage(websocket.TextMessage, b)
+				return result, err
 			},
 			func(text string) {
 				_ = sendFrame(WSFrame{Type: "message", Role: "assistant", Content: text})
@@ -417,6 +443,149 @@ func (s *Server) handleCallTool(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, MCPResponse{Result: result})
 }
 
+// handleMCPManifest returns the MCP server manifest at GET /mcp.
+func (s *Server) handleMCPManifest(w http.ResponseWriter, r *http.Request) {
+	type toolInfo struct {
+		Name        string         `json:"name"`
+		Description string         `json:"description"`
+		Schema      map[string]any `json:"schema,omitempty"`
+	}
+	all := s.tools.List()
+	out := make([]toolInfo, 0, len(all))
+	for _, t := range all {
+		out = append(out, toolInfo{Name: t.Name, Description: t.Description, Schema: t.Schema})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"protocol":    "mcp/1.0",
+		"name":        "bordo",
+		"description": "Bordo software factory — deploy, build, observe your services",
+		"tools":       out,
+	})
+}
+
+// handleMCPCall handles POST /mcp/call with {"tool":"<name>","arguments":{...}}.
+func (s *Server) handleMCPCall(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Tool      string         `json:"tool"`
+		Arguments map[string]any `json:"arguments"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, MCPResponse{Error: "invalid request"})
+		return
+	}
+	tool := s.tools.Get(req.Tool)
+	if tool == nil {
+		writeJSON(w, http.StatusNotFound, MCPResponse{Error: "tool not found: " + req.Tool})
+		return
+	}
+	if req.Arguments == nil {
+		req.Arguments = map[string]any{}
+	}
+	result, err := tool.Call(r.Context(), req.Arguments)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, MCPResponse{Error: err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"result": result})
+}
+
+// handleCPProxy returns an http.Handler that proxies all requests to the control plane.
+// When mounted at /v1, chi strips the /v1 prefix so r.URL.Path starts after /v1.
+func (s *Server) handleCPProxy() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		subPath := r.URL.Path
+		if subPath == "" {
+			subPath = "/"
+		}
+		target := s.cpClient.BaseURL + "/v1" + subPath
+		if r.URL.RawQuery != "" {
+			target += "?" + r.URL.RawQuery
+		}
+		req, err := http.NewRequestWithContext(r.Context(), r.Method, target, r.Body)
+		if err != nil {
+			http.Error(w, "proxy error", http.StatusBadGateway)
+			return
+		}
+		req.Header = r.Header.Clone()
+		if s.cpClient.Token != "" {
+			req.Header.Set("Authorization", "Bearer "+s.cpClient.Token)
+		}
+		req.Header.Del("Host")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			http.Error(w, "upstream unavailable", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		for k, vv := range resp.Header {
+			for _, v := range vv {
+				w.Header().Add(k, v)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	})
+}
+
+// makeApprovalHandler returns a handler that proxies approval/rejection to the control plane.
+func (s *Server) makeApprovalHandler(action string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		target := s.cpClient.BaseURL + "/v1/approvals/" + id + "/" + action
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target, r.Body)
+		if err != nil {
+			http.Error(w, "proxy error", http.StatusBadGateway)
+			return
+		}
+		req.Header = r.Header.Clone()
+		if s.cpClient.Token != "" {
+			req.Header.Set("Authorization", "Bearer "+s.cpClient.Token)
+		}
+		req.Header.Del("Host")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			http.Error(w, "upstream unavailable", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		for k, vv := range resp.Header {
+			for _, v := range vv {
+				w.Header().Add(k, v)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	}
+}
+
+// actionKindFromTool maps a tool name to an action kind.
+func actionKindFromTool(name string) string {
+	switch {
+	case strings.HasPrefix(name, "deploy") || name == "rollback":
+		if name == "rollback" {
+			return "rollback"
+		}
+		return "deploy"
+	case strings.HasPrefix(name, "build"):
+		return "build"
+	case strings.HasPrefix(name, "delete"):
+		return "delete"
+	case strings.HasPrefix(name, "restart"):
+		return "restart"
+	default:
+		return name
+	}
+}
+
+// actionTargetFromInput extracts a human-readable target from tool arguments.
+func actionTargetFromInput(input map[string]any) string {
+	for _, key := range []string{"project_id", "service_id", "name", "id", "region"} {
+		if v, ok := input[key]; ok {
+			return fmt.Sprintf("%v", v)
+		}
+	}
+	return ""
+}
 
 type runtimeConfig struct {
 	DeepSeekAPIKey string `json:"deepseek_api_key"`
