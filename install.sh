@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Bordo installer — run on your VPS:
-#   curl -fsSL https://raw.githubusercontent.com/bordo-io/bordo/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/hasangenc0/bordo/master/install.sh | bash
 # Or from a local clone:
 #   ./install.sh
 
 set -euo pipefail
 
-BORDO_REPO="https://github.com/bordo-io/bordo.git"
+BORDO_REPO="https://github.com/hasangenc0/bordo.git"
 BORDO_DIR="${BORDO_DIR:-/opt/bordo}"
 
 # ── colours ──────────────────────────────────────────────────────────────────
@@ -186,10 +186,14 @@ print_summary() {
   echo ""
   echo -e "${YELLOW}${BOLD}  Next: complete setup from your local machine${NC}"
   echo ""
-  echo -e "  1. Get the setup token from the server logs:"
+  echo -e "  1. Install the Bordo CLI (on your local machine, not the VPS):"
+  echo -e "     ${GREEN}go install github.com/hasangenc0/bordo/cli@latest${NC}"
+  echo -e "     Or build from source: git clone https://github.com/hasangenc0/bordo && cd bordo && go build -o bordo ./cli"
+  echo ""
+  echo -e "  2. Get the one-time setup token from the server logs:"
   echo -e "     ${GREEN}$(compose_cmd) -f $BORDO_DIR/deploy/bordo/docker-compose.yml logs bordod | grep setup_token${NC}"
   echo ""
-  echo -e "  2. Run the setup wizard:"
+  echo -e "  3. Run the setup wizard (enters API key, base URL, admin token):"
   echo -e "     ${GREEN}bordo setup --server $base_url${NC}"
   echo ""
   echo -e "  Logs:    $(compose_cmd) -f $BORDO_DIR/deploy/bordo/docker-compose.yml logs -f"

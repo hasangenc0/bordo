@@ -1,10 +1,15 @@
-# Build frontend (Node.js only used at build time, not at runtime)
+# Build frontend via the npm workspace root (lockfile lives at console/package-lock.json)
 FROM node:22-alpine AS frontend-build
-WORKDIR /app/frontend
-COPY console/frontend/package.json console/frontend/package-lock.json* ./
-RUN npm ci --prefer-offline
-COPY console/frontend/ .
-RUN npm run build
+WORKDIR /app
+# Workspace root manifest + lockfile
+COPY console/package.json console/package-lock.json ./
+# Both workspace package.jsons needed so npm ci can resolve them
+COPY console/frontend/package.json ./frontend/
+COPY console/bff/package.json ./bff/
+RUN npm ci
+# Copy frontend source and build
+COPY console/frontend/ ./frontend/
+RUN npm run build --workspace=frontend
 
 # Runtime — pure nginx:alpine (~25 MB image, no Node.js)
 FROM nginx:1.27-alpine
