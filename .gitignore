@@ -1,5 +1,6 @@
-# Private project memory (not for public repos)
+# Private project memory and internal tracker (not for public repos)
 .memory/
+tracker/
 
 # Binaries (compiled outputs only — not matching the deploy/bordo/ directory)
 /bordod
