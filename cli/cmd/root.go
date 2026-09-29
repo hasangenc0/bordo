@@ -34,6 +34,7 @@ func Root() *cobra.Command {
 		ObserveCmd(),
 		AgentCmd(),
 		GithubCmd(),
+		McpCmd(),
 	)
 
 	return root
