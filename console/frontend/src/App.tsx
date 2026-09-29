@@ -7,7 +7,10 @@ import { useWebSocket } from './hooks/useWebSocket'
 import { useChats } from './hooks/useChats'
 import './styles.css'
 
-const AGENT_WS_URL = import.meta.env.VITE_AGENT_WS_URL ?? 'ws://localhost:7402/ws/chat'
+const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+const AGENT_WS_URL =
+  (import.meta.env.VITE_AGENT_WS_URL as string | undefined) ??
+  `${wsProto}//${window.location.host}/ws/chat`
 
 const SECTION_PROMPTS: Record<SidebarSection, string | null> = {
   projects: '[Projects context: list my projects]',
