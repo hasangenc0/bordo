@@ -1,3 +1,6 @@
+# Private project memory (not for public repos)
+.memory/
+
 # Binaries (compiled outputs only — not matching the deploy/bordo/ directory)
 /bordod
 /bordo
