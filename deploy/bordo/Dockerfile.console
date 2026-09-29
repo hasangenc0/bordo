@@ -1,13 +1,9 @@
-# Build frontend via the npm workspace root (lockfile lives at console/package-lock.json)
 FROM node:20-alpine AS frontend-build
 WORKDIR /app
-# Workspace root (lockfile lives here); only install frontend workspace
-COPY console/package.json console/package-lock.json ./
-COPY console/frontend/package.json ./frontend/
-RUN npm install --workspace=frontend --no-audit --no-fund
-# Copy frontend source and build
-COPY console/frontend/ ./frontend/
-RUN npm run build --workspace=frontend
+COPY console/frontend/package.json ./
+RUN npm install --no-audit --no-fund
+COPY console/frontend/ ./
+RUN npm run build
 
 # Runtime — pure nginx:alpine (~25 MB image, no Node.js)
 FROM nginx:1.27-alpine
