@@ -3,11 +3,18 @@ import type { Message, WSIncoming, WSOutgoing } from '../types'
 
 const RECONNECT_DELAY_MS = 3000
 
-export function useWebSocket(baseURL: string, token: string, chatId: string | null) {
+export function useWebSocket(
+  baseURL: string,
+  token: string,
+  chatId: string | null,
+  onEvent?: (msg: WSIncoming) => void,
+) {
   const [messages, setMessages] = useState<Message[]>([])
   const [connected, setConnected] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const onEventRef = useRef(onEvent)
+  onEventRef.current = onEvent
   // Incremented whenever we switch chats; captured per-WS so stale sockets don't reconnect.
   const epochRef = useRef(0)
 
@@ -26,6 +33,10 @@ export function useWebSocket(baseURL: string, token: string, chatId: string | nu
       ws.onmessage = (evt) => {
         try {
           const msg: WSIncoming = JSON.parse(evt.data as string)
+
+          // Forward all events to the optional callback
+          if (onEventRef.current) onEventRef.current(msg)
+
           if (msg.type === 'history' && msg.messages) {
             setMessages(
               msg.messages.map((m, i) => ({
