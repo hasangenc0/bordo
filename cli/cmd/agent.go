@@ -51,7 +51,7 @@ func agentChatCmd() *cobra.Command {
 
 			// Create a new chat session if not reusing one.
 			if sessionID == "" {
-				sessionID, err = createChatSession(agentURL)
+				sessionID, err = createChatSession(agentURL, cfg.Token)
 				if err != nil {
 					return fmt.Errorf("creating chat session: %w", err)
 				}
@@ -64,6 +64,10 @@ func agentChatCmd() *cobra.Command {
 			wsBase := strings.Replace(agentURL, "http://", "ws://", 1)
 			wsBase = strings.Replace(wsBase, "https://", "wss://", 1)
 			wsURL := wsBase + "/ws/chat?chat_id=" + sessionID
+			// Pass token as query param — WebSocket API in browsers can't set headers.
+			if cfg.Token != "" {
+				wsURL += "&token=" + cfg.Token
+			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
@@ -116,9 +120,16 @@ func agentChatCmd() *cobra.Command {
 }
 
 // createChatSession POSTs to /chats and returns the new session ID.
-func createChatSession(agentURL string) (string, error) {
-	resp, err := http.Post(agentURL+"/chats", "application/json",
-		strings.NewReader(`{"title":""}`))
+func createChatSession(agentURL, token string) (string, error) {
+	req, err := http.NewRequest(http.MethodPost, agentURL+"/chats", strings.NewReader(`{"title":""}`))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", err
 	}

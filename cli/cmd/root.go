@@ -18,11 +18,14 @@ func Root() *cobra.Command {
 		SilenceUsage: true,
 	}
 
+	configCmd := ConfigCmd()
+	configCmd.AddCommand(ConfigSetCmd())
 	root.AddCommand(
 		VersionCmd(),
-		ConfigCmd(),
+		configCmd,
 		LoginCmd(),
 		WhoamiCmd(),
+		SetupCmd(),
 		ProjectCmd(),
 		TemplateCmd(),
 		BuildCmd(),

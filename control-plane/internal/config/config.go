@@ -20,8 +20,9 @@ type Config struct {
 
 // ServerConfig controls the HTTP server.
 type ServerConfig struct {
-	Port    int    `yaml:"port"`
-	BaseURL string `yaml:"base_url"` // public URL, e.g. https://bordo.acme.com — required for GitHub App callbacks
+	Port      int    `yaml:"port"`
+	BaseURL   string `yaml:"base_url"`   // public/VPN URL — required for GitHub App callbacks
+	AuthToken string `yaml:"auth_token"` // bearer token required on /v1; set BORDO_AUTH_TOKEN
 }
 
 // BaseURL returns the configured public base URL.
@@ -114,7 +115,8 @@ func findConfigFile() string {
 // Supported variables:
 //
 //	BORDO_SERVER_PORT      int
-//	BORDO_BASE_URL         string  public URL of bordod, required for GitHub App callbacks
+//	BORDO_BASE_URL         string  VPN/private URL of bordod — required for GitHub App callbacks
+//	BORDO_AUTH_TOKEN       string  bearer token required on all /v1 routes (recommended)
 //	BORDO_STORE_DRIVER     string
 //	BORDO_STORE_PATH       string
 //	BORDO_LOG_LEVEL        string
@@ -127,6 +129,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("BORDO_BASE_URL"); v != "" {
 		cfg.Server.BaseURL = v
+	}
+	if v := os.Getenv("BORDO_AUTH_TOKEN"); v != "" {
+		cfg.Server.AuthToken = v
 	}
 	if v := os.Getenv("BORDO_STORE_DRIVER"); v != "" {
 		cfg.Store.Driver = strings.ToLower(v)
