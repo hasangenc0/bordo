@@ -1,0 +1,11 @@
+CREATE TABLE IF NOT EXISTS bordo_environments (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  branch TEXT NOT NULL DEFAULT 'main',
+  region_name TEXT NOT NULL DEFAULT '',
+  namespace TEXT NOT NULL DEFAULT '',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(project_id, name)
+);

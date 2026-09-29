@@ -1,15 +1,6 @@
 name: node-bff
-description: Node.js + Fastify + TypeScript BFF with OTel auto-instrumentation and structured logging
-runtime: node
-variables:
-  - name: ProjectName
-    description: The npm package name (e.g. my-bff)
-    required: true
-    default: my-bff
-  - name: BackendURL
-    description: URL of the Java backend to proxy (e.g. http://my-service:8080)
-    required: false
-    default: http://backend:8080
-health:
-  path: /health
-  port: 3000
+description: Node.js Backend-for-Frontend API proxy
+category: Backend
+icon: "⬡"
+author: Bordo Official
+variables: []

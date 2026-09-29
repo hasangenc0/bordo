@@ -9,10 +9,13 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"time"
 
+	"github.com/bordo-io/bordo/control-plane/internal/approval"
 	"github.com/bordo-io/bordo/control-plane/internal/buildorchestrator"
 	"github.com/bordo-io/bordo/control-plane/internal/config"
+	"github.com/bordo-io/bordo/control-plane/internal/environment"
 	"github.com/bordo-io/bordo/control-plane/internal/fleet"
 	githubpkg "github.com/bordo-io/bordo/control-plane/internal/github"
 	"github.com/bordo-io/bordo/control-plane/internal/observe"
@@ -22,6 +25,7 @@ import (
 	"github.com/bordo-io/bordo/control-plane/internal/settings"
 	"github.com/bordo-io/bordo/control-plane/internal/setup"
 	"github.com/bordo-io/bordo/control-plane/internal/store"
+	bordobtemplate "github.com/bordo-io/bordo/control-plane/internal/template"
 	"github.com/bordo-io/bordo/control-plane/internal/version"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -222,12 +226,19 @@ func (s *Server) registerRoutes() {
 			r.Delete("/{key}", secretsHandler.Delete)
 		})
 
+		envStore := environment.NewStore(s.db)
+		r.Mount("/projects/{projectID}/environments", environment.NewHandler(envStore))
+
+		approvalStore := approval.NewStore(s.db)
+		r.Mount("/approvals", approval.NewHandler(approvalStore))
+
 		observeHandler := observe.NewHandler(s.db)
 		r.Get("/observe/metrics", observeHandler.QueryMetrics)
 		r.Get("/observe/logs", observeHandler.QueryLogs)
 		r.Get("/observe/traces/{traceID}", observeHandler.QueryTrace)
 
-		r.Get("/templates", s.handleListTemplates)
+		templateHandler := bordobtemplate.NewHandler(os.Getenv("BORDO_TEMPLATE_ROOT"))
+		r.Mount("/templates", templateHandler)
 		r.Get("/fleet", s.handleFleetOverview)
 
 		// GitHub App integration helpers.

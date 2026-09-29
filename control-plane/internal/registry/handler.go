@@ -23,6 +23,8 @@ func NewHandler(store Store) http.Handler {
 	r.Get("/", h.list)
 	r.Get("/{id}", h.get)
 	r.Delete("/{id}", h.delete)
+	r.Get("/{id}/env", h.getEnv)
+	r.Put("/{id}/env", h.putEnv)
 	return r
 }
 
@@ -68,6 +70,20 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 	if projects == nil {
 		projects = []*Project{}
 	}
+
+	if r.URL.Query().Get("include") == "release_status" {
+		enriched := make([]*ProjectWithStatus, 0, len(projects))
+		for _, p := range projects {
+			pws := &ProjectWithStatus{Project: p}
+			status, region, _, _ := h.store.GetLatestReleaseInfo(r.Context(), p.ID)
+			pws.ReleaseStatus = status
+			pws.ReleaseRegion = region
+			enriched = append(enriched, pws)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"projects": enriched})
+		return
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{"projects": projects})
 }
 
@@ -82,7 +98,12 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, p)
+
+	pws := &ProjectWithStatus{Project: p}
+	status, region, _, _ := h.store.GetLatestReleaseInfo(r.Context(), id)
+	pws.ReleaseStatus = status
+	pws.ReleaseRegion = region
+	writeJSON(w, http.StatusOK, pws)
 }
 
 func (h *handler) delete(w http.ResponseWriter, r *http.Request) {
@@ -97,6 +118,70 @@ func (h *handler) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *handler) getEnv(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	// Ensure project exists.
+	if _, err := h.store.GetProject(r.Context(), id); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "project not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	vars, err := h.store.GetEnvVars(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if vars == nil {
+		vars = []*EnvVar{}
+	}
+
+	// Mask secret values.
+	for _, v := range vars {
+		if v.Secret {
+			v.Value = "***"
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"vars": vars})
+}
+
+type putEnvRequest struct {
+	Vars []*EnvVar `json:"vars"`
+}
+
+func (h *handler) putEnv(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	// Ensure project exists.
+	if _, err := h.store.GetProject(r.Context(), id); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "project not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	var req putEnvRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Vars == nil {
+		req.Vars = []*EnvVar{}
+	}
+
+	if err := h.store.SetEnvVars(r.Context(), id, req.Vars); err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"vars": req.Vars})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
