@@ -1,0 +1,58 @@
+server {
+    listen 80;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml text/javascript;
+    gzip_min_length 1000;
+
+    location /health {
+        return 200 "ok";
+        add_header Content-Type text/plain;
+    }
+
+    # /api/tools → /mcp/tools on the agent (exact match wins over prefix below)
+    location = /api/tools {
+        proxy_pass http://bordo-agent:7402/mcp/tools;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header Authorization "Bearer ${BORDO_AGENT_TOKEN}";
+        proxy_read_timeout 30s;
+    }
+
+    # /api/* → strip /api prefix and proxy to agent root
+    location /api/ {
+        rewrite ^/api/(.*) /$1 break;
+        proxy_pass http://bordo-agent:7402;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header Authorization "Bearer ${BORDO_AGENT_TOKEN}";
+        proxy_read_timeout 60s;
+    }
+
+    # WebSocket proxy — auth added server-side via header
+    location /ws/ {
+        proxy_pass http://bordo-agent:7402/ws/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header Authorization "Bearer ${BORDO_AGENT_TOKEN}";
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    # Cache static assets aggressively (content-hashed filenames)
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # SPA fallback — must be last
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+    }
+}

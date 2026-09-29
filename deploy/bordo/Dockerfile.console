@@ -1,34 +1,21 @@
-# Stage 1: Build BFF
-FROM node:22-alpine AS bff-build
-WORKDIR /app
-COPY console/package.json ./
-COPY console/bff/ bff/
-WORKDIR /app/bff
-RUN npm install && npm run build
-
-# Stage 2: Build frontend
+# Build frontend (Node.js only used at build time, not at runtime)
 FROM node:22-alpine AS frontend-build
-WORKDIR /app
-COPY console/package.json ./
-COPY console/frontend/ frontend/
 WORKDIR /app/frontend
-RUN npm install && npm run build
+COPY console/frontend/package.json console/frontend/package-lock.json* ./
+RUN npm ci --prefer-offline
+COPY console/frontend/ .
+RUN npm run build
 
-# Stage 3: Runtime — nginx (frontend) + node (BFF) in one container
-FROM node:22-alpine
-RUN apk add --no-cache nginx
+# Runtime — pure nginx:alpine (~25 MB image, no Node.js)
+FROM nginx:1.27-alpine
+RUN apk add --no-cache gettext  # provides envsubst
 
-# Copy BFF
-COPY --from=bff-build /app/bff/dist /app/bff/dist
-COPY --from=bff-build /app/bff/package.json /app/bff/
-RUN cd /app/bff && npm install --production
-
-# Copy frontend dist
 COPY --from=frontend-build /app/frontend/dist /usr/share/nginx/html
-
-# nginx config
-COPY deploy/bordo/nginx-console.conf /etc/nginx/http.d/default.conf
+COPY deploy/bordo/nginx-console.conf.template /etc/nginx/templates/default.conf.template
+COPY deploy/bordo/console-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh && \
+    # Remove default nginx config so our template is the only one
+    rm -f /etc/nginx/conf.d/default.conf /etc/nginx/http.d/default.conf
 
 EXPOSE 80
-
-CMD sh -c "node /app/bff/dist/index.js & nginx -g 'daemon off;'"
+ENTRYPOINT ["/entrypoint.sh"]
