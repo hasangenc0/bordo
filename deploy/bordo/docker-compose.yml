@@ -18,10 +18,10 @@ services:
       # - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       # - BORDO_REGISTRY=${BORDO_REGISTRY}
       # Tell Go runtime to GC aggressively before reaching 512 MB.
-      - GOMEMLIMIT=512MiB
+      - GOMEMLIMIT=700MiB
       - GOGC=50
-    mem_limit: 700m
-    memswap_limit: 700m
+    mem_limit: 1g
+    memswap_limit: 1g
     volumes:
       - bordod-data:/data
     healthcheck:
