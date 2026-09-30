@@ -17,8 +17,8 @@ services:
       # - BORDO_BASE_URL=${BORDO_BASE_URL}
       # - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       # - BORDO_REGISTRY=${BORDO_REGISTRY}
-    mem_limit: 256m
-    memswap_limit: 256m
+    mem_limit: 512m
+    memswap_limit: 512m
     volumes:
       - bordod-data:/data
     healthcheck:
