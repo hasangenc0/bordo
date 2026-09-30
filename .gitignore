@@ -2,8 +2,9 @@
 .memory/
 tracker/
 
-# Claude Code worktrees and session data
-.claude/
+# Claude Code worktrees and session data (but keep committed skills)
+.claude/*
+!.claude/skills/
 
 # Binaries (compiled outputs only — not matching the deploy/bordo/ directory)
 /bordod

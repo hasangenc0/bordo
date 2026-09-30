@@ -56,7 +56,10 @@ fleet controller spans all regions
 
 ## Quickstart
 
-Full guide: [`docs/guides/getting-started.md`](docs/guides/getting-started.md)
+**Running a server?** The `bordo` CLI drives the whole platform (Docker under the hood):
+see [`docs/guides/running-with-the-cli.md`](docs/guides/running-with-the-cli.md).
+
+**Building from source?** Full guide: [`docs/guides/getting-started.md`](docs/guides/getting-started.md)
 
 ```bash
 # 1. Clone and build

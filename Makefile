@@ -8,8 +8,8 @@ OUT       ?= $(CURDIR)/bin
 VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT    ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 BTIME     ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-CP_PKG    := github.com/bordo-io/bordo/control-plane/internal/version
-CLI_PKG   := github.com/bordo-io/bordo/cli/cmd
+CP_PKG    := github.com/hasangenc0/bordo/control-plane/internal/version
+CLI_PKG   := github.com/hasangenc0/bordo/cli/cmd
 
 LDFLAGS   ?= -s -w \
 	-X $(CP_PKG).Version=$(VERSION) \
@@ -31,7 +31,7 @@ build-cp:
 
 build-cli:
 	@echo "→ building bordo (CLI)"
-	go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(OUT)/bordo ./cli
+	go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(OUT)/bordo ./cli/bordo
 
 build-fleet:
 	@echo "→ building bordo-fleet (fleet agent)"

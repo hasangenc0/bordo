@@ -60,7 +60,8 @@ Ports: VictoriaMetrics `:8428`, Loki `:3100`, Tempo `:3200`, OTel OTLP HTTP `:43
 
 ```bash
 # Build the CLI locally
-make build   # or: go build -o bin/bordo ./cli/
+make build   # or: go build -o bin/bordo ./cli/bordo
+# or install directly: go install github.com/hasangenc0/bordo/cli/bordo@latest
 
 # Point at the running stack
 ./bin/bordo config set server http://localhost:7401
