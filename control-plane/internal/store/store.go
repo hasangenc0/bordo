@@ -30,8 +30,9 @@ func Open(cfg config.StoreConfig) (*sql.DB, error) {
 		if err != nil {
 			return nil, fmt.Errorf("opening sqlite db %s: %w", cfg.Path, err)
 		}
-		// Enable WAL mode and foreign keys for SQLite.
-		if _, err := db.Exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;`); err != nil {
+		// Enable WAL mode, limit page cache to 4 MB, disable mmap to
+		// reduce virtual-memory footprint on memory-constrained servers.
+		if _, err := db.Exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA cache_size=-4096; PRAGMA mmap_size=0;`); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("configuring sqlite pragmas: %w", err)
 		}
