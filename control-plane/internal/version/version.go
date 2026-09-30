@@ -3,9 +3,9 @@ package version
 
 // Variables are overwritten at build time by the Makefile via:
 //
-//	-X github.com/bordo-io/bordo/control-plane/internal/version.Version=$(VERSION)
-//	-X github.com/bordo-io/bordo/control-plane/internal/version.Commit=$(COMMIT)
-//	-X github.com/bordo-io/bordo/control-plane/internal/version.BuildTime=$(BTIME)
+//	-X github.com/hasangenc0/bordo/control-plane/internal/version.Version=$(VERSION)
+//	-X github.com/hasangenc0/bordo/control-plane/internal/version.Commit=$(COMMIT)
+//	-X github.com/hasangenc0/bordo/control-plane/internal/version.BuildTime=$(BTIME)
 var (
 	Version   = "dev"
 	Commit    = "none"

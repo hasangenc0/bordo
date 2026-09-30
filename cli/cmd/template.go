@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	bordobuild "github.com/bordo-io/bordo/build/template"
+	bordobuild "github.com/hasangenc0/bordo/build/template"
 	"github.com/spf13/cobra"
 )
 

@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/bordo-io/bordo/cli/internal/config"
+	"github.com/hasangenc0/bordo/cli/internal/config"
 	"github.com/spf13/cobra"
 )
 

@@ -6,7 +6,7 @@ package main
 import (
 	"os"
 
-	"github.com/bordo-io/bordo/cli/cmd"
+	"github.com/hasangenc0/bordo/cli/cmd"
 )
 
 func main() {

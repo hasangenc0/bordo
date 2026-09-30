@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/bordo-io/bordo/control-plane/internal/secrets"
+	"github.com/hasangenc0/bordo/control-plane/internal/secrets"
 )
 
 // Known setting keys.

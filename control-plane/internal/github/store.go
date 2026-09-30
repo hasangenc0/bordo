@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/bordo-io/bordo/control-plane/internal/secrets"
+	"github.com/hasangenc0/bordo/control-plane/internal/secrets"
 )
 
 // AppCredentials holds the GitHub App registration details.

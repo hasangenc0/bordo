@@ -1,10 +1,10 @@
-module github.com/bordo-io/bordo/control-plane
+module github.com/hasangenc0/bordo/control-plane
 
 go 1.22
 
 require (
-	github.com/bordo-io/bordo/build v0.0.0
-	github.com/bordo-io/bordo/release v0.0.0
+	github.com/hasangenc0/bordo/build v0.0.0
+	github.com/hasangenc0/bordo/release v0.0.0
 	github.com/go-chi/chi/v5 v5.1.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
@@ -14,9 +14,9 @@ require (
 	modernc.org/sqlite v1.32.0
 )
 
-replace github.com/bordo-io/bordo/build => ../build
+replace github.com/hasangenc0/bordo/build => ../build
 
-replace github.com/bordo-io/bordo/release => ../release
+replace github.com/hasangenc0/bordo/release => ../release
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect

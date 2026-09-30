@@ -2,6 +2,9 @@
 .memory/
 tracker/
 
+# Claude Code worktrees and session data
+.claude/
+
 # Binaries (compiled outputs only — not matching the deploy/bordo/ directory)
 /bordod
 /bordo
@@ -49,6 +52,10 @@ node_modules/
 .nuxt/
 dist/
 coverage/
+tsconfig.tsbuildinfo
+tsconfig.node.tsbuildinfo
+vite.config.js
+vite.config.d.ts
 
 # Java (Gradle/Maven output dirs — avoid matching Go's build/ module)
 target/

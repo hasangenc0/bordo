@@ -1,4 +1,4 @@
-module github.com/bordo-io/bordo/scripts
+module github.com/hasangenc0/bordo/scripts
 
 go 1.22
 

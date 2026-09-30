@@ -1,3 +1,3 @@
-module github.com/bordo-io/bordo/release
+module github.com/hasangenc0/bordo/release
 
 go 1.22

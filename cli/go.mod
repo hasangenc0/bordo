@@ -1,9 +1,9 @@
-module github.com/bordo-io/bordo/cli
+module github.com/hasangenc0/bordo/cli
 
 go 1.22
 
 require (
-	github.com/bordo-io/bordo/build v0.0.0
+	github.com/hasangenc0/bordo/build v0.0.0
 	github.com/spf13/cobra v1.8.1
 	gopkg.in/yaml.v3 v3.0.1
 	nhooyr.io/websocket v1.8.17
@@ -14,4 +14,4 @@ require (
 	github.com/spf13/pflag v1.0.5 // indirect
 )
 
-replace github.com/bordo-io/bordo/build => ../build
+replace github.com/hasangenc0/bordo/build => ../build

@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/bordo-io/bordo/control-plane/internal/config"
+	"github.com/hasangenc0/bordo/control-plane/internal/config"
 	_ "modernc.org/sqlite" // register "sqlite" driver
 )
 

@@ -1,4 +1,4 @@
-module github.com/bordo-io/bordo/build
+module github.com/hasangenc0/bordo/build
 
 go 1.22
 

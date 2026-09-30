@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bordo-io/bordo/agent/internal/chatstore"
-	"github.com/bordo-io/bordo/agent/internal/tools"
+	"github.com/hasangenc0/bordo/agent/internal/chatstore"
+	"github.com/hasangenc0/bordo/agent/internal/tools"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"

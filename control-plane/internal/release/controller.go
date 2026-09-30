@@ -12,8 +12,8 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/bordo-io/bordo/control-plane/internal/fleet"
-	githubpkg "github.com/bordo-io/bordo/control-plane/internal/github"
+	"github.com/hasangenc0/bordo/control-plane/internal/fleet"
+	githubpkg "github.com/hasangenc0/bordo/control-plane/internal/github"
 )
 
 // Controller watches for reconciling releases and applies them to k3s clusters.

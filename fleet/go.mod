@@ -1,4 +1,4 @@
-module github.com/bordo-io/bordo/fleet
+module github.com/hasangenc0/bordo/fleet
 
 go 1.22
 

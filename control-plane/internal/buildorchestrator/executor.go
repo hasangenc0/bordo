@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/bordo-io/bordo/build/builder"
-	"github.com/bordo-io/bordo/build/template"
-	githubpkg "github.com/bordo-io/bordo/control-plane/internal/github"
+	"github.com/hasangenc0/bordo/build/builder"
+	"github.com/hasangenc0/bordo/build/template"
+	githubpkg "github.com/hasangenc0/bordo/control-plane/internal/github"
 )
 
 // Executor runs the full build pipeline: scaffold → build → log.

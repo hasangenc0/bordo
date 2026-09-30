@@ -1,4 +1,4 @@
-module github.com/bordo-io/bordo/agent
+module github.com/hasangenc0/bordo/agent
 
 go 1.22
 

@@ -11,7 +11,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/bordo-io/bordo/cli/internal/config"
+	"github.com/hasangenc0/bordo/cli/internal/config"
 )
 
 // Client is a typed HTTP client for the bordod REST API.

@@ -30,11 +30,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/bordo-io/bordo/control-plane/internal/config"
-	"github.com/bordo-io/bordo/control-plane/internal/server"
-	"github.com/bordo-io/bordo/control-plane/internal/store"
-	"github.com/bordo-io/bordo/control-plane/internal/version"
-	"github.com/bordo-io/bordo/release/reconciler"
+	"github.com/hasangenc0/bordo/control-plane/internal/config"
+	"github.com/hasangenc0/bordo/control-plane/internal/server"
+	"github.com/hasangenc0/bordo/control-plane/internal/store"
+	"github.com/hasangenc0/bordo/control-plane/internal/version"
+	"github.com/hasangenc0/bordo/release/reconciler"
 	"github.com/spf13/cobra"
 )
 

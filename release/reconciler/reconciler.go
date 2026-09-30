@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/bordo-io/bordo/release/internal/reconciler"
+	"github.com/hasangenc0/bordo/release/internal/reconciler"
 )
 
 // Reconciler is an alias for the internal reconciler so other modules can use it.

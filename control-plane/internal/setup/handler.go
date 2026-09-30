@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/bordo-io/bordo/control-plane/internal/settings"
+	"github.com/hasangenc0/bordo/control-plane/internal/settings"
 )
 
 // Handler serves the unauthenticated setup endpoints.
