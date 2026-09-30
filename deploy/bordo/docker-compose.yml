@@ -17,6 +17,11 @@ services:
       # - BORDO_BASE_URL=${BORDO_BASE_URL}
       # - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       # - BORDO_REGISTRY=${BORDO_REGISTRY}
+      # Cap Go's heap at 200 MB and return freed pages immediately.
+      # Without this, Go grows heap to fill the cgroup ceiling before GCing.
+      # CGO SQLite (mattn/go-sqlite3) uses ~10-20 MB outside Go's heap.
+      - GOMEMLIMIT=200MiB
+      - GODEBUG=madvdontneed=1
     mem_limit: 512m
     memswap_limit: 512m
     volumes:
