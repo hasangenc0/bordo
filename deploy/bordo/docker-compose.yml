@@ -20,6 +20,9 @@ services:
       # Tell Go runtime to GC aggressively before reaching 512 MB.
       - GOMEMLIMIT=700MiB
       - GOGC=50
+      # Force Go to release freed pages to OS immediately instead of
+      # holding them with MADV_FREE (default). Keeps RSS near working set.
+      - GODEBUG=madvdontneed=1
     mem_limit: 1g
     memswap_limit: 1g
     volumes:
