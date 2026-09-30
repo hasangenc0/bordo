@@ -35,6 +35,7 @@ func Root() *cobra.Command {
 		AgentCmd(),
 		GithubCmd(),
 		McpCmd(),
+		PlatformCmd(),
 		UpgradeCmd(),
 	)
 

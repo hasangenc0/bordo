@@ -1,0 +1,59 @@
+services:
+  bordod:
+    image: ${BORDOD_IMAGE:-ghcr.io/hasangenc0/bordod:latest}
+    ports:
+      - "${BORDOD_PORT:-7401}:7401"
+    environment:
+      - BORDO_SERVER_PORT=7401
+      - BORDO_STORE_PATH=/data/bordod.db
+      - BORDO_TEMPLATE_ROOT=/templates
+      - BORDO_VM_URL=http://victoriametrics:8428
+      - BORDO_LOKI_URL=http://loki:3100
+      - BORDO_TEMPO_URL=http://tempo:3200
+      - BORDO_AUTH_TOKEN=${BORDO_INTERNAL_TOKEN}
+    volumes:
+      - bordod-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:7401/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    mem_limit: 256m
+    memswap_limit: 256m
+    restart: unless-stopped
+
+  bordo-agent:
+    image: ${AGENT_IMAGE:-ghcr.io/hasangenc0/bordo-agent:latest}
+    ports:
+      - "${AGENT_PORT:-7402}:7402"
+    environment:
+      - BORDO_AGENT_PORT=7402
+      - BORDO_CP_URL=http://bordod:7401
+      - BORDO_TOKEN=${BORDO_INTERNAL_TOKEN}
+      - BORDO_AGENT_TOKEN=${BORDO_INTERNAL_TOKEN}
+      - BORDO_CHAT_DB=/data/agent-chats.db
+    mem_limit: 512m
+    memswap_limit: 512m
+    volumes:
+      - agent-data:/data
+    depends_on:
+      bordod:
+        condition: service_healthy
+    restart: unless-stopped
+
+  bordo-console:
+    image: ${CONSOLE_IMAGE:-ghcr.io/hasangenc0/bordo-console:latest}
+    ports:
+      - "${CONSOLE_PORT:-3000}:80"
+    environment:
+      - BORDO_AGENT_TOKEN=${BORDO_INTERNAL_TOKEN}
+    mem_limit: 64m
+    memswap_limit: 64m
+    depends_on:
+      - bordo-agent
+    restart: unless-stopped
+
+volumes:
+  bordod-data:
+  agent-data:
