@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"github.com/hasangenc0/bordo/control-plane/internal/config"
-	_ "modernc.org/sqlite" // register "sqlite" driver
+	_ "github.com/mattn/go-sqlite3" // register "sqlite3" driver (CGO; far lower RSS than modernc)
 )
 
 //go:embed migrations/*.sql
@@ -22,17 +22,15 @@ var migrationsFS embed.FS
 // For SQLite, the parent directory is created automatically.
 func Open(cfg config.StoreConfig) (*sql.DB, error) {
 	switch strings.ToLower(cfg.Driver) {
-	case "sqlite", "":
+	case "sqlite3", "sqlite", "":
 		if err := os.MkdirAll(filepath.Dir(cfg.Path), 0o700); err != nil {
 			return nil, fmt.Errorf("creating db directory: %w", err)
 		}
-		db, err := sql.Open("sqlite", cfg.Path)
+		db, err := sql.Open("sqlite3", cfg.Path)
 		if err != nil {
 			return nil, fmt.Errorf("opening sqlite db %s: %w", cfg.Path, err)
 		}
-		// Enable WAL mode, limit page cache to 4 MB, disable mmap to
-		// reduce virtual-memory footprint on memory-constrained servers.
-		if _, err := db.Exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA cache_size=-4096; PRAGMA mmap_size=0;`); err != nil {
+		if _, err := db.Exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;`); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("configuring sqlite pragmas: %w", err)
 		}

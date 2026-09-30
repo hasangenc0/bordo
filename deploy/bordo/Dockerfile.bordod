@@ -1,4 +1,6 @@
 FROM golang:1.22-alpine AS build
+# gcc + musl-dev required for CGO (mattn/go-sqlite3)
+RUN apk add --no-cache gcc musl-dev
 WORKDIR /workspace
 
 # Copy workspace files first for better layer caching
@@ -27,7 +29,7 @@ COPY observe/ observe/
 COPY release/ release/
 COPY scripts/ scripts/
 
-RUN go build -ldflags="-s -w" -o /bordod ./control-plane/
+RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o /bordod ./control-plane/
 
 FROM alpine:3.20
 # git is required for pushing scaffolded code to GitHub repos.

@@ -17,14 +17,8 @@ services:
       # - BORDO_BASE_URL=${BORDO_BASE_URL}
       # - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       # - BORDO_REGISTRY=${BORDO_REGISTRY}
-      # Tell Go runtime to GC aggressively before reaching 512 MB.
-      - GOMEMLIMIT=700MiB
-      - GOGC=50
-      # Force Go to release freed pages to OS immediately instead of
-      # holding them with MADV_FREE (default). Keeps RSS near working set.
-      - GODEBUG=madvdontneed=1
-    mem_limit: 1g
-    memswap_limit: 1g
+    mem_limit: 256m
+    memswap_limit: 256m
     volumes:
       - bordod-data:/data
     healthcheck:
