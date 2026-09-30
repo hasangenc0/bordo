@@ -2,6 +2,7 @@ package secrets
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"fmt"
@@ -54,10 +55,8 @@ func DeriveKey() ([32]byte, error) {
 	}
 	// Generate a new random key.
 	var raw [32]byte
-	if _, err := os.ReadFile("/dev/urandom"); err == nil {
-		f, _ := os.Open("/dev/urandom")
-		_, _ = f.Read(raw[:])
-		f.Close()
+	if _, err := rand.Read(raw[:]); err != nil {
+		return raw, fmt.Errorf("generating secret key: %w", err)
 	}
 	hex := fmt.Sprintf("%x", raw)
 	_ = os.WriteFile(keyFile, []byte(hex), 0600)
