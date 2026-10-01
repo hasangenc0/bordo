@@ -128,8 +128,8 @@ func platformUpCmd() *cobra.Command {
 				return fmt.Errorf("docker compose up: %w", err)
 			}
 			fmt.Println("\nBordo is up. Next:")
-			fmt.Println("  bordo platform token                      # get the setup token")
-			fmt.Println("  bordo setup --server http://localhost:7401")
+			fmt.Println("  bordo platform token    # get the setup token")
+			fmt.Println("  bordo setup             # configure (no flags needed on the server)")
 			return nil
 		},
 	}

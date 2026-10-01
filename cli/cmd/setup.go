@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/hasangenc0/bordo/cli/internal/config"
@@ -127,6 +128,11 @@ func runSetup(server string) error {
 		fmt.Printf("\nWarning: could not save CLI config: %v\n", err)
 	}
 
+	consoleURL := "http://localhost:3000"
+	if u, err := url.Parse(server); err == nil && u.Hostname() != "" {
+		consoleURL = "http://" + u.Hostname() + ":3000"
+	}
+
 	fmt.Printf(`
 ╔════════════════════════════════════════════════════════╗
 ║  Bordo setup complete!                                 ║
@@ -138,13 +144,13 @@ func runSetup(server string) error {
     bordo project list
     bordo agent chat "create a new java web service called hello-api"
 
-  Console:  %s:3000 (change port if CONSOLE_PORT differs)
+  Console:  %s   (change the port if CONSOLE_PORT differs)
 
   To update settings later:
     bordo config set deepseek_api_key <new-key>
     bordo config set registry_url ghcr.io/your-org
 
-`, server)
+`, consoleURL)
 
 	return nil
 }
