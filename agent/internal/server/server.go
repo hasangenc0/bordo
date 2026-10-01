@@ -12,14 +12,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/hasangenc0/bordo/agent/internal/chatstore"
-	"github.com/hasangenc0/bordo/agent/internal/tools"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/hasangenc0/bordo/agent/internal/chatstore"
+	"github.com/hasangenc0/bordo/agent/internal/tools"
 )
 
 // Config holds agent server configuration.
@@ -41,6 +42,15 @@ type Server struct {
 	upgrader  websocket.Upgrader
 	chats     *chatstore.Store
 	cpClient  *tools.CPClient
+
+	// Lazy LLM-config refresh: the agent may start before 'bordo setup'
+	// stores the key, and the key can change later. These let handleChat
+	// re-fetch runtime-config from the control plane on demand (throttled).
+	cpURL           string
+	cpToken         string
+	providerFromEnv bool // DEEPSEEK_API_KEY set in env — never override
+	provMu          sync.Mutex
+	provFetched     time.Time
 }
 
 // Run creates and starts the server, blocking until ctx is cancelled.
@@ -84,14 +94,17 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 
 	s := &Server{
-		cfg:       cfg,
-		logger:    newLogger(cfg.LogLevel),
-		router:    chi.NewRouter(),
-		sessions:  NewSessionStore(),
-		tools:     tools.NewBordoToolRegistry(cpClient),
-		anthropic: NewAnthropicClient(cfg.APIKey),
-		chats:     chatDB,
-		cpClient:  cpClient,
+		cfg:             cfg,
+		logger:          newLogger(cfg.LogLevel),
+		router:          chi.NewRouter(),
+		sessions:        NewSessionStore(),
+		tools:           tools.NewBordoToolRegistry(cpClient),
+		anthropic:       NewAnthropicClient(cfg.APIKey),
+		chats:           chatDB,
+		cpClient:        cpClient,
+		cpURL:           cpURL,
+		cpToken:         cpToken,
+		providerFromEnv: os.Getenv("DEEPSEEK_API_KEY") != "",
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
@@ -234,8 +247,11 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// Pick up a key configured after startup (e.g. via 'bordo setup').
+		s.refreshModelProvider()
+
 		if s.anthropic.Token == "" {
-			reply := fmt.Sprintf("(no model provider configured — set DEEPSEEK_API_KEY; received: %q)", userContent)
+			reply := fmt.Sprintf("(no model provider configured — run 'bordo setup' to set the DeepSeek key; received: %q)", userContent)
 			session.AddMessage("assistant", reply)
 			if err := sendFrame(WSFrame{Type: "message", Role: "assistant", Content: reply}); err != nil {
 				break
@@ -591,6 +607,35 @@ type runtimeConfig struct {
 	DeepSeekAPIKey string `json:"deepseek_api_key"`
 	LLMModel       string `json:"llm_model"`
 	LLMURL         string `json:"llm_url"`
+}
+
+// refreshModelProvider re-fetches LLM config from the control plane so the
+// agent picks up a key configured via 'bordo setup' after it started, and key
+// changes made later. It is a no-op when the key is pinned via env. When a key
+// is already set it refreshes at most once per 30s to avoid per-message load.
+func (s *Server) refreshModelProvider() {
+	if s.providerFromEnv {
+		return
+	}
+	s.provMu.Lock()
+	defer s.provMu.Unlock()
+	if s.anthropic.Token != "" && time.Since(s.provFetched) < 30*time.Second {
+		return
+	}
+	rc, err := fetchRuntimeConfig(s.cpURL, s.cpToken)
+	if err != nil {
+		return
+	}
+	s.provFetched = time.Now()
+	if rc.DeepSeekAPIKey != "" {
+		s.anthropic.Token = rc.DeepSeekAPIKey
+	}
+	if rc.LLMModel != "" {
+		s.anthropic.Model = rc.LLMModel
+	}
+	if rc.LLMURL != "" {
+		s.anthropic.APIURL = rc.LLMURL
+	}
 }
 
 func fetchRuntimeConfig(cpURL, token string) (*runtimeConfig, error) {
