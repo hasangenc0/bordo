@@ -155,52 +155,47 @@ func runSetup(server string) error {
 	return nil
 }
 
-// ConfigSetCmd returns `bordo config set <key> <value>` for updating settings post-setup.
-func ConfigSetCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "set <key> <value>",
-		Short: "Update a platform setting on the Bordo server",
-		Long: `Update a setting stored in Bordo's encrypted settings store.
+// serverSettingKeys are settings stored on the Bordo server (encrypted settings
+// store), as opposed to local CLI config keys. 'bordo config set' routes these
+// to the server.
+var serverSettingKeys = map[string]bool{
+	"deepseek_api_key": true,
+	"base_url":         true,
+	"llm_model":        true,
+	"llm_url":          true,
+	"registry_url":     true,
+}
 
-Updatable keys:
-  deepseek_api_key   AI provider key
-  base_url           Public URL for GitHub App callbacks
-  llm_model          LLM model name (default: deepseek-chat)
-  llm_url            LLM endpoint URL
-  registry_url       Container registry URL`,
-		Args: cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load()
-			if err != nil {
-				return err
-			}
-			if cfg.Server == "" {
-				return fmt.Errorf("not logged in — run: bordo login --server <url> --token <token>")
-			}
-
-			body, _ := json.Marshal(map[string]string{"key": args[0], "value": args[1]})
-			req, err := http.NewRequest(http.MethodPost, cfg.Server+"/v1/settings", bytes.NewReader(body))
-			if err != nil {
-				return err
-			}
-			req.Header.Set("Content-Type", "application/json")
-			if cfg.Token != "" {
-				req.Header.Set("Authorization", "Bearer "+cfg.Token)
-			}
-			resp, err := http.DefaultClient.Do(req)
-			if err != nil {
-				return err
-			}
-			defer resp.Body.Close()
-			var result map[string]string
-			_ = json.NewDecoder(resp.Body).Decode(&result)
-			if resp.StatusCode != http.StatusOK {
-				return fmt.Errorf("server error: %s", result["error"])
-			}
-			fmt.Printf("Updated %s\n", args[0])
-			return nil
-		},
+// setServerSetting updates a single setting on the Bordo server via /v1/settings.
+func setServerSetting(key, value string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
 	}
+	if cfg.Server == "" {
+		return fmt.Errorf("not logged in — run: bordo login --server <url> --token <token>")
+	}
+
+	body, _ := json.Marshal(map[string]string{"key": key, "value": value})
+	req, err := http.NewRequest(http.MethodPost, cfg.Server+"/v1/settings", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if cfg.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.Token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	var result map[string]string
+	_ = json.NewDecoder(resp.Body).Decode(&result)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("server error: %s", result["error"])
+	}
+	return nil
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────

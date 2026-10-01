@@ -166,12 +166,17 @@ func (s *Server) registerMiddleware() {
 func (s *Server) requireToken() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			token := s.activeAdminToken()
-			if token == "" {
+			admin := s.activeAdminToken()
+			// Internal service token (from BORDO_AUTH_TOKEN env) — used by the
+			// agent for service-to-service calls like /v1/runtime-config. It
+			// stays valid even after setup stores a separate admin token.
+			internal := s.cfg.Server.AuthToken
+			if admin == "" && internal == "" {
 				next.ServeHTTP(w, r)
 				return
 			}
-			if r.Header.Get("Authorization") == "Bearer "+token {
+			auth := r.Header.Get("Authorization")
+			if (admin != "" && auth == "Bearer "+admin) || (internal != "" && auth == "Bearer "+internal) {
 				next.ServeHTTP(w, r)
 				return
 			}

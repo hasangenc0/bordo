@@ -20,13 +20,26 @@ func ConfigCmd() *cobra.Command {
 func configSetCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "set <key> <value>",
-		Short: "Set a configuration value",
-		Args:  cobra.ExactArgs(2),
+		Short: "Set a configuration value (local CLI config or server setting)",
+		Long: `Set a configuration value.
+
+Local CLI keys:    server, token, agent_url, agent_token
+Server settings:   deepseek_api_key, base_url, llm_model, llm_url, registry_url
+                   (stored on the Bordo server; requires login)`,
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := config.Set(args[0], args[1]); err != nil {
+			key, value := args[0], args[1]
+			if serverSettingKeys[key] {
+				if err := setServerSetting(key, value); err != nil {
+					return err
+				}
+				fmt.Printf("updated server setting %s\n", key)
+				return nil
+			}
+			if err := config.Set(key, value); err != nil {
 				return err
 			}
-			fmt.Printf("set %s = %s\n", args[0], args[1])
+			fmt.Printf("set %s = %s\n", key, value)
 			return nil
 		},
 	}
