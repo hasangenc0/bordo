@@ -11,9 +11,10 @@ import (
 
 // Config is the CLI configuration stored on disk.
 type Config struct {
-	Server   string `yaml:"server"`
-	Token    string `yaml:"token"`
-	AgentURL string `yaml:"agent_url"`
+	Server     string `yaml:"server"`
+	Token      string `yaml:"token"`
+	AgentURL   string `yaml:"agent_url"`
+	AgentToken string `yaml:"agent_token"`
 }
 
 // Default returns the path to the CLI config file.
@@ -64,8 +65,10 @@ func Set(key, value string) error {
 		cfg.Token = value
 	case "agent_url":
 		cfg.AgentURL = value
+	case "agent_token":
+		cfg.AgentToken = value
 	default:
-		return fmt.Errorf("unknown config key %q (valid: server, token, agent_url)", key)
+		return fmt.Errorf("unknown config key %q (valid: server, token, agent_url, agent_token)", key)
 	}
 	return Save(cfg)
 }
@@ -83,7 +86,9 @@ func Get(key string) (string, error) {
 		return cfg.Token, nil
 	case "agent_url":
 		return cfg.AgentURL, nil
+	case "agent_token":
+		return cfg.AgentToken, nil
 	default:
-		return "", fmt.Errorf("unknown config key %q (valid: server, token, agent_url)", key)
+		return "", fmt.Errorf("unknown config key %q (valid: server, token, agent_url, agent_token)", key)
 	}
 }

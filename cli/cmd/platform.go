@@ -9,7 +9,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 
+	"github.com/hasangenc0/bordo/cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -91,6 +93,14 @@ func platformInstallCmd() *cobra.Command {
 				fmt.Printf("Generated %s (internal token, ports)\n", envPath)
 			} else {
 				fmt.Printf("Kept existing %s\n", envPath)
+			}
+
+			// Sync the internal token into the CLI config so 'bordo agent chat'
+			// can authenticate to the agent directly.
+			if tok := readEnvValue(envPath, "BORDO_INTERNAL_TOKEN"); tok != "" {
+				if err := config.Set("agent_token", tok); err != nil {
+					fmt.Printf("Warning: could not save agent token to CLI config: %v\n", err)
+				}
 			}
 
 			fmt.Println("Pulling images...")
@@ -274,6 +284,21 @@ func composeInDir(dir string, args ...string) *exec.Cmd {
 	c.Stderr = os.Stderr
 	c.Stdin = os.Stdin
 	return c
+}
+
+// readEnvValue returns the value of key from a KEY=VALUE .env file, or "".
+func readEnvValue(path, key string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, key+"=") {
+			return strings.TrimSpace(strings.TrimPrefix(line, key+"="))
+		}
+	}
+	return ""
 }
 
 func ensureInstalled() error {

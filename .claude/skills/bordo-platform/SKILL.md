@@ -71,6 +71,10 @@ requires a **DeepSeek API key** (the agent's LLM). Steps:
   will not install system packages itself.
 - **A service won't start / restarts** → `bordo platform logs <service>` to read the
   error. bordod not being configured yet is normal until `bordo setup` is run.
+- **`bordo agent chat` fails with 401 / "empty session ID"** → the agent needs the
+  internal token, not the admin token. `bordo platform install` sets this
+  automatically; otherwise run `bordo config set agent_token <BORDO_INTERNAL_TOKEN>`
+  (the value is in the deploy `.env`). The console UI always works without this.
 - **Deploying an app fails** → the control plane is up, but running user workloads
   needs a k3s cluster bootstrapped onto a VM first (fleet layer). That is a
   separate step from `bordo platform`.

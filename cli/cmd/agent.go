@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -49,9 +50,17 @@ func agentChatCmd() *cobra.Command {
 				agentURL = "http://localhost:7402"
 			}
 
+			// The agent authenticates with the internal agent token, not the
+			// admin token. Prefer agent_token; fall back to token for setups
+			// where they coincide.
+			authToken := cfg.AgentToken
+			if authToken == "" {
+				authToken = cfg.Token
+			}
+
 			// Create a new chat session if not reusing one.
 			if sessionID == "" {
-				sessionID, err = createChatSession(agentURL, cfg.Token)
+				sessionID, err = createChatSession(agentURL, authToken)
 				if err != nil {
 					return fmt.Errorf("creating chat session: %w", err)
 				}
@@ -65,8 +74,8 @@ func agentChatCmd() *cobra.Command {
 			wsBase = strings.Replace(wsBase, "https://", "wss://", 1)
 			wsURL := wsBase + "/ws/chat?chat_id=" + sessionID
 			// Pass token as query param — WebSocket API in browsers can't set headers.
-			if cfg.Token != "" {
-				wsURL += "&token=" + cfg.Token
+			if authToken != "" {
+				wsURL += "&token=" + authToken
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -134,6 +143,15 @@ func createChatSession(agentURL, token string) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		msg := strings.TrimSpace(string(body))
+		if resp.StatusCode == http.StatusUnauthorized {
+			return "", fmt.Errorf("agent rejected the request (401): set the agent token with 'bordo config set agent_token <BORDO_INTERNAL_TOKEN>' (from your deploy .env)")
+		}
+		return "", fmt.Errorf("agent returned %s: %s", resp.Status, msg)
+	}
 
 	var r struct {
 		ID string `json:"id"`
