@@ -82,7 +82,7 @@ func runSetup(server string) error {
 	fmt.Printf("Setting up Bordo at %s\n\n", server)
 
 	// 2. Collect inputs
-	setupToken := prompt("Setup token (from server logs): ", true)
+	setupToken := prompt("Setup token (run 'bordo platform token'): ", true)
 	if setupToken == "" {
 		return fmt.Errorf("setup token is required")
 	}
