@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 
 	"github.com/spf13/cobra"
 )
@@ -43,6 +44,7 @@ Typical flow:
 		platformRestartCmd(),
 		platformStatusCmd(),
 		platformLogsCmd(),
+		platformTokenCmd(),
 		platformUpgradeCmd(),
 	)
 	return cmd
@@ -115,7 +117,9 @@ func platformUpCmd() *cobra.Command {
 			if err := compose("up", "-d", "--remove-orphans").Run(); err != nil {
 				return fmt.Errorf("docker compose up: %w", err)
 			}
-			fmt.Println("\nBordo is up. Next: bordo setup   (get the token with: bordo platform logs)")
+			fmt.Println("\nBordo is up. Next:")
+			fmt.Println("  bordo platform token                      # get the setup token")
+			fmt.Println("  bordo setup --server http://localhost:7401")
 			return nil
 		},
 	}
@@ -187,6 +191,50 @@ func platformLogsCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "stream logs")
 	return cmd
+}
+
+func platformTokenCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "token",
+		Short: "Print the one-time setup token (needed for 'bordo setup')",
+		Long: `Print bordod's current setup token so you can run 'bordo setup'.
+
+The token is regenerated every time bordod restarts, so this always
+returns the token for the latest start. Once setup is complete the token
+is no longer logged and this reports that Bordo is already configured.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := ensureInstalled(); err != nil {
+				return err
+			}
+			dir := platformDir()
+			out, err := exec.Command("docker", "compose",
+				"-f", filepath.Join(dir, "docker-compose.yml"),
+				"logs", "bordod").CombinedOutput()
+			if err != nil {
+				return fmt.Errorf("reading bordod logs: %w", err)
+			}
+			tok := extractSetupToken(string(out))
+			if tok == "" {
+				return fmt.Errorf("no setup token found — Bordo may already be configured, or bordod hasn't started yet (check: bordo platform status)")
+			}
+			fmt.Println(tok)
+			return nil
+		},
+	}
+}
+
+// setupTokenRE matches the 64-hex setup token in both JSON and text log
+// formats: `"setup_token":"<hex>"` or `setup_token=<hex>`.
+var setupTokenRE = regexp.MustCompile(`setup_token["=:\s]+"?([a-f0-9]{64})`)
+
+// extractSetupToken returns the most recent setup token found in the logs.
+// bordod regenerates the token on every start, so the last match is current.
+func extractSetupToken(logs string) string {
+	matches := setupTokenRE.FindAllStringSubmatch(logs, -1)
+	if len(matches) == 0 {
+		return ""
+	}
+	return matches[len(matches)-1][1]
 }
 
 func platformUpgradeCmd() *cobra.Command {

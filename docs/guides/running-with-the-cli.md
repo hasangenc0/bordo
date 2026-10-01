@@ -68,7 +68,7 @@ On first start bordod prints a one-time **setup token**. Retrieve it, then run t
 setup wizard (you'll also need a DeepSeek API key for the agent's LLM):
 
 ```bash
-bordo platform logs bordod | grep setup_token
+bordo platform token                          # prints the setup token
 bordo setup --server http://localhost:7401
 ```
 

@@ -34,7 +34,7 @@ bordo platform status     # verify health
 bordod prints a one-time **setup token** to its logs on first start. Setup also
 requires a **DeepSeek API key** (the agent's LLM). Steps:
 
-1. `bordo platform logs bordod | grep setup_token`
+1. `bordo platform token` — prints the current setup token
 2. `bordo setup --server http://localhost:7401` — supply the setup token + DeepSeek key
 3. Save the returned **admin token** — it is shown only once
 4. `bordo login` with the admin token, then `bordo whoami` to confirm
@@ -49,6 +49,7 @@ requires a **DeepSeek API key** (the agent's LLM). Steps:
 | `bordo platform down --volumes` | Also delete data volumes — **destructive, confirm first**. |
 | `bordo platform restart [service]` | Restart all, or one named service. |
 | `bordo platform status` | Show service health. |
+| `bordo platform token` | Print the one-time setup token (needed for `bordo setup`). |
 | `bordo platform logs [-f] [service]` | Show/stream logs, optionally for one service. |
 | `bordo platform upgrade` | Pull latest images + restart; **data preserved**. |
 
