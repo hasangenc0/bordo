@@ -68,9 +68,13 @@ On first start bordod prints a one-time **setup token**. Retrieve it, then run t
 setup wizard (you'll also need a DeepSeek API key for the agent's LLM):
 
 ```bash
-bordo platform token                          # prints the setup token
-bordo setup --server http://localhost:7401
+bordo platform token    # prints the setup token
+bordo setup             # defaults to http://localhost:7401 — no flag needed on the server
 ```
+
+> From your laptop instead of the server, point at the tunnel/URL:
+> `bordo setup --server http://localhost:7401` (with an SSH tunnel) or
+> `bordo setup --server http://<SERVER_IP>:7401`.
 
 Setup returns your **admin token** — save it, it is shown only once.
 

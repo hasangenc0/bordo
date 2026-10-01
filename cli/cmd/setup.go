@@ -21,27 +21,29 @@ func SetupCmd() *cobra.Command {
 		Short: "Complete first-run setup for a Bordo server",
 		Long: `Interactive wizard that configures a freshly installed Bordo server.
 
-You need the one-time setup token printed to the server logs on first start:
+Run it on the server itself — it defaults to http://localhost:7401, so no
+flags are needed:
 
-  docker compose logs bordod | grep "setup_token"
+  bordo platform token      # grab the one-time setup token
+  bordo setup               # configure (prompts for the token + DeepSeek key)
 
-Then run:
-
-  bordo setup --server http://YOUR_VPS_IP:7401`,
+From a different machine, point --server at the bordod URL (e.g. through an
+SSH tunnel: ssh -L 7401:localhost:7401 ...), or set it once with
+'bordo config set server <url>'.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if server == "" {
 				cfg, _ := config.Load()
 				server = cfg.Server
 			}
 			if server == "" {
-				return fmt.Errorf("--server is required (or run 'bordo login --server <url>' first)")
+				server = "http://localhost:7401"
 			}
 			server = strings.TrimRight(server, "/")
 			return runSetup(server)
 		},
 	}
 
-	cmd.Flags().StringVar(&server, "server", "", "bordod server URL (e.g. http://1.2.3.4:7401)")
+	cmd.Flags().StringVar(&server, "server", "", "bordod server URL (default: http://localhost:7401)")
 	return cmd
 }
 
@@ -69,7 +71,7 @@ func runSetup(server string) error {
 	// 1. Check status
 	status, err := getSetupStatus(server)
 	if err != nil {
-		return fmt.Errorf("reaching server %s: %w\n\nIs the server running? Check: docker compose ps", server, err)
+		return fmt.Errorf("reaching server %s: %w\n\nIs the server running? Check: bordo platform status", server, err)
 	}
 	if status.Configured {
 		fmt.Println("This server is already configured.")

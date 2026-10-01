@@ -25,7 +25,7 @@ values `BORDOD_PORT`, `AGENT_PORT`, `CONSOLE_PORT`.
 ```bash
 bordo platform install    # write compose + .env, pull images (needs Docker present)
 bordo platform up         # start all services
-bordo setup --server http://localhost:7401   # first-run config (see below)
+bordo setup   # first-run config; defaults to localhost:7401 on the server
 bordo platform status     # verify health
 ```
 
@@ -35,7 +35,7 @@ bordod prints a one-time **setup token** to its logs on first start. Setup also
 requires a **DeepSeek API key** (the agent's LLM). Steps:
 
 1. `bordo platform token` — prints the current setup token
-2. `bordo setup --server http://localhost:7401` — supply the setup token + DeepSeek key
+2. `bordo setup` — supply the setup token + DeepSeek key (add --server <url> if not on the server)
 3. Save the returned **admin token** — it is shown only once
 4. `bordo login` with the admin token, then `bordo whoami` to confirm
 
