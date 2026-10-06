@@ -1,13 +1,16 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"os/signal"
 	"strings"
-	"time"
+	"syscall"
 
 	"github.com/hasangenc0/bordo/cli/internal/config"
 	"github.com/spf13/cobra"
@@ -35,11 +38,17 @@ type wsFrame struct {
 
 func agentChatCmd() *cobra.Command {
 	var sessionID string
+	var interactive bool
 
 	cmd := &cobra.Command{
-		Use:   "chat <message>",
-		Short: "Send a message to the agent and stream the response",
-		Args:  cobra.MinimumNArgs(1),
+		Use:   "chat [message]",
+		Short: "Chat with the agent — one-shot with a message, or interactive with none",
+		Long: `Send a message to the agent and stream the reply.
+
+With a message argument it runs one-shot and exits. With no message (or
+--interactive) it opens an interactive session — type messages, see replies,
+and keep context across turns. Exit with 'exit', 'quit', or Ctrl-D.`,
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -51,35 +60,29 @@ func agentChatCmd() *cobra.Command {
 			}
 
 			// The agent authenticates with the internal agent token, not the
-			// admin token. Prefer agent_token; fall back to token for setups
-			// where they coincide.
+			// admin token. Prefer agent_token; fall back to token.
 			authToken := cfg.AgentToken
 			if authToken == "" {
 				authToken = cfg.Token
 			}
 
-			// Create a new chat session if not reusing one.
 			if sessionID == "" {
 				sessionID, err = createChatSession(agentURL, authToken)
 				if err != nil {
 					return fmt.Errorf("creating chat session: %w", err)
 				}
-				fmt.Printf("[session: %s]\n", sessionID[:8])
 			}
 
-			message := strings.Join(args, " ")
-
-			// Convert http:// → ws:// for the WebSocket URL.
 			wsBase := strings.Replace(agentURL, "http://", "ws://", 1)
 			wsBase = strings.Replace(wsBase, "https://", "wss://", 1)
 			wsURL := wsBase + "/ws/chat?chat_id=" + sessionID
-			// Pass token as query param — WebSocket API in browsers can't set headers.
 			if authToken != "" {
 				wsURL += "&token=" + authToken
 			}
 
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			defer cancel()
+			// Cancel cleanly on Ctrl-C.
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
 
 			conn, _, err := websocket.Dial(ctx, wsURL, nil)
 			if err != nil {
@@ -87,45 +90,101 @@ func agentChatCmd() *cobra.Command {
 			}
 			defer conn.CloseNow()
 
-			// Send the user message in a goroutine so that if the server sends a "history"
-			// frame first, neither side deadlocks waiting for the other to read.
-			sendErr := make(chan error, 1)
-			go func() {
-				out := map[string]string{"type": "message", "role": "user", "content": message}
-				sendErr <- wsjson.Write(ctx, conn, out)
-			}()
+			runInteractive := interactive || len(args) == 0
 
-			// Stream frames until "done" or "error".
-			// "history" frames (sent for sessions with prior messages) are silently discarded.
-			for {
-				var f wsFrame
-				if err := wsjson.Read(ctx, conn, &f); err != nil {
-					return fmt.Errorf("reading response: %w", err)
+			// One-shot: send the message, stream one turn, done.
+			if !runInteractive {
+				if err := sendChatMessage(ctx, conn, strings.Join(args, " ")); err != nil {
+					return fmt.Errorf("sending message: %w", err)
 				}
-				switch f.Type {
-				case "history":
-					// prior chat history loaded on reconnect — ignore
-				case "message":
-					fmt.Print(f.Content)
-				case "tool_call":
-					input, _ := json.Marshal(f.Input)
-					fmt.Printf("\n[tool: %s] %s\n", f.ToolName, string(input))
-				case "done":
-					fmt.Println()
-					if werr := <-sendErr; werr != nil {
-						return fmt.Errorf("sending message: %w", werr)
-					}
-					return conn.Close(websocket.StatusNormalClosure, "")
-				case "error":
-					fmt.Println()
-					return fmt.Errorf("agent error: %s", f.Content)
+				if err := streamChatTurn(ctx, conn); err != nil {
+					return err
+				}
+				return conn.Close(websocket.StatusNormalClosure, "")
+			}
+
+			// Interactive REPL.
+			fmt.Printf("Bordo agent — session %s. Type 'exit' or Ctrl-D to quit.\n", sessionID[:8])
+
+			// If a message was also passed with -i, send it as the first turn.
+			if len(args) > 0 {
+				msg := strings.Join(args, " ")
+				fmt.Printf("› %s\n", msg)
+				if err := sendChatMessage(ctx, conn, msg); err != nil {
+					return fmt.Errorf("sending message: %w", err)
+				}
+				if err := streamChatTurn(ctx, conn); err != nil && ctx.Err() == nil {
+					return err
 				}
 			}
+
+			scanner := bufio.NewScanner(os.Stdin)
+			for ctx.Err() == nil {
+				fmt.Print("› ")
+				if !scanner.Scan() {
+					break // EOF / Ctrl-D
+				}
+				line := strings.TrimSpace(scanner.Text())
+				if line == "" {
+					continue
+				}
+				if line == "exit" || line == "quit" {
+					break
+				}
+				if err := sendChatMessage(ctx, conn, line); err != nil {
+					if ctx.Err() != nil {
+						break
+					}
+					return fmt.Errorf("sending message: %w", err)
+				}
+				if err := streamChatTurn(ctx, conn); err != nil {
+					if ctx.Err() != nil {
+						break
+					}
+					return err
+				}
+			}
+			fmt.Println()
+			return conn.Close(websocket.StatusNormalClosure, "")
 		},
 	}
 
 	cmd.Flags().StringVar(&sessionID, "session", "", "reuse an existing chat session ID")
+	cmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "interactive session (default when no message is given)")
 	return cmd
+}
+
+// sendChatMessage writes a user message frame to the agent WebSocket.
+func sendChatMessage(ctx context.Context, conn *websocket.Conn, content string) error {
+	return wsjson.Write(ctx, conn, map[string]string{
+		"type": "message", "role": "user", "content": content,
+	})
+}
+
+// streamChatTurn reads and prints frames until the agent signals "done" (end of
+// one reply) or "error". "history" frames are ignored.
+func streamChatTurn(ctx context.Context, conn *websocket.Conn) error {
+	for {
+		var f wsFrame
+		if err := wsjson.Read(ctx, conn, &f); err != nil {
+			return fmt.Errorf("reading response: %w", err)
+		}
+		switch f.Type {
+		case "history":
+			// prior chat history on reconnect — ignore
+		case "message":
+			fmt.Print(f.Content)
+		case "tool_call":
+			input, _ := json.Marshal(f.Input)
+			fmt.Printf("\n[tool: %s] %s\n", f.ToolName, string(input))
+		case "done":
+			fmt.Println()
+			return nil
+		case "error":
+			fmt.Println()
+			return fmt.Errorf("agent error: %s", f.Content)
+		}
+	}
 }
 
 // createChatSession POSTs to /chats and returns the new session ID.
