@@ -62,6 +62,12 @@ func platformInstallCmd() *cobra.Command {
 				return fmt.Errorf("Docker is not installed. Install it first: https://docs.docker.com/engine/install/")
 			}
 
+			if desc, conflict := conflictingStack(); conflict {
+				fmt.Printf("Warning: another Bordo stack appears to be running: %s.\n"+
+					"It would clash on ports 7401/7402/3000, so 'bordo platform up' will\n"+
+					"refuse to start until that stack is stopped (or run 'up --force').\n\n", desc)
+			}
+
 			dir := platformDir()
 			if err := os.MkdirAll(dir, 0o700); err != nil {
 				return fmt.Errorf("creating %s: %w", dir, err)
@@ -117,12 +123,21 @@ func platformInstallCmd() *cobra.Command {
 }
 
 func platformUpCmd() *cobra.Command {
-	return &cobra.Command{
+	var force bool
+	cmd := &cobra.Command{
 		Use:   "up",
 		Short: "Start all Bordo services in the background",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := ensureInstalled(); err != nil {
 				return err
+			}
+			if !force {
+				if desc, conflict := conflictingStack(); conflict {
+					return fmt.Errorf("Another Bordo stack appears to be running: %s.\n"+
+						"Starting a second stack will clash on ports 7401/7402/3000.\n"+
+						"Stop the other stack first (e.g. 'cd /opt/bordo/deploy/bordo && docker compose down'), or manage that one instead.\n"+
+						"To start anyway, re-run with --force.", desc)
+				}
 			}
 			if err := compose("up", "-d", "--remove-orphans").Run(); err != nil {
 				return fmt.Errorf("docker compose up: %w", err)
@@ -133,6 +148,8 @@ func platformUpCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&force, "force", false, "start even if another Bordo stack is detected (advanced)")
+	return cmd
 }
 
 func platformDownCmd() *cobra.Command {
@@ -267,6 +284,66 @@ func platformUpgradeCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// cliProject is the docker compose project name of the CLI-managed stack.
+// compose runs with the working directory set to platformDir(), so compose
+// derives the project name from that directory's basename (e.g. "deploy").
+// Its containers are therefore named "<project>-<service>-N".
+func cliProject() string {
+	return filepath.Base(platformDir())
+}
+
+// conflictingStack reports whether another Bordo stack is already running on
+// this host — one that would clash on ports 7401/7402/3000 with the
+// CLI-managed stack. It returns a human-readable description (e.g. the
+// conflicting container name) and true when a conflict is found.
+//
+// Heuristic: inspect running containers via `docker ps`; any container whose
+// name contains "bordod" but does not belong to the CLI-managed compose
+// project is a conflict. As a fallback it also flags the classic git-clone
+// install at /opt/bordo/deploy/bordo when a bordod container is running.
+//
+// If docker is missing or `docker ps` errors, the check is skipped (returns
+// "", false) rather than failing — detection is best-effort.
+func conflictingStack() (string, bool) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return "", false
+	}
+	out, err := exec.Command("docker", "ps", "--format", "{{.Names}}\t{{.Ports}}").Output()
+	if err != nil {
+		return "", false
+	}
+
+	prefix := cliProject() + "-"
+	altPrefix := cliProject() + "_"
+	foundBordod := false
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		name := line
+		if i := strings.IndexByte(line, '\t'); i >= 0 {
+			name = line[:i]
+		}
+		if !strings.Contains(name, "bordod") {
+			continue
+		}
+		foundBordod = true
+		// Skip the CLI-managed stack's own container.
+		if strings.HasPrefix(name, prefix) || strings.HasPrefix(name, altPrefix) {
+			continue
+		}
+		return fmt.Sprintf("container %q", name), true
+	}
+
+	// Classic git-clone install: a separate compose stack under /opt/bordo.
+	if _, err := os.Stat("/opt/bordo/deploy/bordo/docker-compose.yml"); err == nil && foundBordod {
+		return "git-clone install at /opt/bordo/deploy/bordo", true
+	}
+
+	return "", false
 }
 
 // compose runs `docker compose` scoped to the CLI-managed platform dir.
