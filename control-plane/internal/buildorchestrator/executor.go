@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -13,6 +14,24 @@ import (
 	"github.com/hasangenc0/bordo/build/template"
 	githubpkg "github.com/hasangenc0/bordo/control-plane/internal/github"
 )
+
+// noBuilderMessage is the actionable error surfaced when no local container
+// builder is available. On standard installs the bordod host has no docker CLI
+// by design — builds are meant to run in GitHub Actions.
+const noBuilderMessage = "No container builder available. Bordo builds images in GitHub Actions — connect GitHub with 'bordo github setup', then re-trigger the build. (Local Docker builds require the docker CLI on the bordod host, which is intentionally absent on standard installs.)"
+
+// dockerAvailable reports whether a local container builder CLI is on PATH.
+// It mirrors build/internal/container's binary resolution: prefer "docker",
+// fall back to "nerdctl" (Rancher Desktop).
+func dockerAvailable() bool {
+	if _, err := exec.LookPath("docker"); err == nil {
+		return true
+	}
+	if _, err := exec.LookPath("nerdctl"); err == nil {
+		return true
+	}
+	return false
+}
 
 // Executor runs the full build pipeline: scaffold → build → log.
 type Executor struct {
@@ -114,11 +133,18 @@ func (e *Executor) buildViaGitHubActions(ctx context.Context, buildID string, b 
 	owner, repo, err := githubpkg.ParseRepoURL(repoURL)
 	if err != nil {
 		_ = e.store.AppendLog(ctx, buildID, fmt.Sprintf("[error] bad repo URL %q: %v", repoURL, err))
+		if !dockerAvailable() {
+			return e.failNoBuilder(ctx, buildID)
+		}
 		return e.buildLocally(ctx, buildID, b, scaffoldDir)
 	}
 
 	token, err := e.githubToken(ctx)
 	if err != nil || token == "" {
+		if !dockerAvailable() {
+			_ = e.store.AppendLog(ctx, buildID, fmt.Sprintf("[error] no GitHub token: %v", err))
+			return e.failNoBuilder(ctx, buildID)
+		}
 		_ = e.store.AppendLog(ctx, buildID, fmt.Sprintf("[bordo] no GitHub token — falling back to local build: %v", err))
 		return e.buildLocally(ctx, buildID, b, scaffoldDir)
 	}
@@ -148,8 +174,18 @@ func (e *Executor) buildViaGitHubActions(ctx context.Context, buildID string, b 
 	return e.store.UpdateStatus(ctx, buildID, "success", imageRef, "")
 }
 
+// failNoBuilder marks the build failed with the actionable "no builder"
+// message and logs it, instead of attempting a doomed local docker build.
+func (e *Executor) failNoBuilder(ctx context.Context, buildID string) error {
+	_ = e.store.AppendLog(ctx, buildID, "[error] "+noBuilderMessage)
+	return e.store.UpdateStatus(ctx, buildID, "failed", "", noBuilderMessage)
+}
+
 // buildLocally runs a Docker build on the local daemon (requires Docker socket).
 func (e *Executor) buildLocally(ctx context.Context, buildID string, b *Build, scaffoldDir string) error {
+	if !dockerAvailable() {
+		return e.failNoBuilder(ctx, buildID)
+	}
 	_ = e.store.AppendLog(ctx, buildID, "[bordo] starting local docker build")
 	bldr := builder.NewLocalBuilder()
 	logCh, err := bldr.Build(ctx, builder.BuildOptions{
