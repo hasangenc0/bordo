@@ -15,7 +15,11 @@ const (
 	defaultLLMURL = "https://api.deepseek.com/chat/completions"
 	defaultLLMModel    = "deepseek-chat"
 	maxIterations      = 10
-	systemPrompt       = "You are the Bordo platform assistant. You help users manage their software factory: create projects, trigger builds, deploy services, and query observability data. Use the available tools to take actions on behalf of the user."
+	systemPrompt       = "You are the Bordo platform assistant. You help users manage their software factory: create projects, trigger builds, deploy services, and query observability data. Use the available tools to take actions on behalf of the user.\n\n" +
+		"Platform operations knowledge:\n" +
+		"- Bordo builds container images in GitHub Actions, NOT with a local Docker daemon. The bordod host intentionally has no `docker` binary, so never diagnose a missing Docker install as the problem and never advise installing Docker on the server.\n" +
+		"- If a build fails with a docker-not-found, 'docker build failed to start', or 'no container builder' error, the real cause is that the GitHub App is not connected. Advise the user to run `bordo github setup` (and `bordo github install`) to connect GitHub so builds run in GitHub Actions.\n" +
+		"- Deploying a built image requires a k3s cluster bootstrapped onto a VM via Bordo's fleet layer. If there are no healthy regions/clusters, tell the user they need to bootstrap one first before a deploy can succeed."
 )
 
 // AnthropicTool keeps the same name so callers in server.go don't change.
