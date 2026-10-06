@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
+	"strings"
 
 	"github.com/hasangenc0/bordo/cli/internal/config"
 	"github.com/spf13/cobra"
@@ -30,6 +31,7 @@ func githubSetupCmd() *cobra.Command {
 				return err
 			}
 			setupURL := cfg.Server + "/github/app/setup"
+			printRedirectNote(cfg.Server)
 			fmt.Printf("Opening: %s\n", setupURL)
 			if err := openBrowser(setupURL); err != nil {
 				fmt.Println("Could not open browser automatically.")
@@ -50,6 +52,7 @@ func githubInstallCmd() *cobra.Command {
 				return err
 			}
 			installURL := cfg.Server + "/github/app/install"
+			printRedirectNote(cfg.Server)
 			fmt.Printf("Opening: %s\n", installURL)
 			if err := openBrowser(installURL); err != nil {
 				fmt.Println("Could not open browser automatically.")
@@ -110,6 +113,18 @@ func githubStatusCmd() *cobra.Command {
 			}
 			return nil
 		},
+	}
+}
+
+// printRedirectNote informs the user that GitHub will redirect their browser
+// back to Bordo at its base URL, so that base URL must be reachable from the
+// browser (a common failure when running Bordo behind an SSH tunnel).
+func printRedirectNote(server string) {
+	fmt.Println("GitHub will redirect your browser back to Bordo at its base URL. Make sure your browser can reach that URL.")
+	fmt.Println("  - Through an SSH tunnel: base_url should be http://localhost:7401 (set: bordo config set base_url http://localhost:7401)")
+	fmt.Println("  - Public server: base_url should be http://<SERVER_IP>:7401")
+	if strings.Contains(server, "localhost") {
+		fmt.Println("  Note: base_url points at localhost — make sure your SSH tunnel is open in the browser's machine.")
 	}
 }
 

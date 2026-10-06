@@ -144,6 +144,10 @@ func runSetup(server string) error {
     bordo project list
     bordo agent chat "create a new java web service called hello-api"
 
+  Next, connect GitHub to enable builds & deploys:
+    bordo github setup
+    bordo github install
+
   Console:  %s   (change the port if CONSOLE_PORT differs)
 
   To update settings later:
