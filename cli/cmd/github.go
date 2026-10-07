@@ -17,7 +17,7 @@ func GithubCmd() *cobra.Command {
 		Use:   "github",
 		Short: "Manage GitHub App integration",
 	}
-	cmd.AddCommand(githubSetupCmd(), githubInstallCmd(), githubStatusCmd())
+	cmd.AddCommand(githubLoginCmd(), githubConnectCmd(), githubSetupCmd(), githubInstallCmd(), githubStatusCmd())
 	return cmd
 }
 

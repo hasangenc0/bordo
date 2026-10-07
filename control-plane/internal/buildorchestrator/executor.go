@@ -116,16 +116,41 @@ func (e *Executor) run(ctx context.Context, buildID string) error {
 		return e.store.UpdateStatus(ctx, buildID, "success", "", "")
 	}
 
-	// Step 2: resolve GitHub repo for this project (if App is configured).
+	// Step 2: build via GitHub Actions when a GitHub token is configured.
+	// Create the repo on first build if the project doesn't have one yet.
 	if e.ghStore != nil {
 		repoURL := e.resolveRepoURL(ctx, b.ProjectID)
+		if repoURL == "" {
+			repoURL = e.ensureRepo(ctx, buildID, b)
+		}
 		if repoURL != "" {
 			return e.buildViaGitHubActions(ctx, buildID, b, scaffoldDir, repoURL)
 		}
 	}
 
-	// Fallback: local Docker build.
+	// Fallback: local Docker build (fails loudly if no builder is present).
 	return e.buildLocally(ctx, buildID, b, scaffoldDir)
+}
+
+// ensureRepo creates a GitHub repo for the project when none is set yet, using
+// the configured GitHub token (device-flow/PAT user token, or App installation).
+// Returns the repo URL, or "" if no token is configured or creation failed.
+func (e *Executor) ensureRepo(ctx context.Context, buildID string, b *Build) string {
+	token, err := e.githubToken(ctx)
+	if err != nil || token == "" {
+		return ""
+	}
+	_ = e.store.AppendLog(ctx, buildID, fmt.Sprintf("[bordo] creating GitHub repo %q", b.ImageName))
+	cloneURL, err := githubpkg.CreateRepoForUser(ctx, token, b.ImageName, true)
+	if err != nil {
+		_ = e.store.AppendLog(ctx, buildID, fmt.Sprintf("[error] creating repo: %v", err))
+		return ""
+	}
+	if _, derr := e.db.ExecContext(ctx, `UPDATE projects SET git_repo_url = ? WHERE id = ?`, cloneURL, b.ProjectID); derr != nil {
+		_ = e.store.AppendLog(ctx, buildID, fmt.Sprintf("[warn] could not persist repo URL: %v", derr))
+	}
+	_ = e.store.AppendLog(ctx, buildID, "[bordo] repo created: "+cloneURL)
+	return cloneURL
 }
 
 // buildViaGitHubActions pushes the scaffold to GitHub and waits for the workflow.
@@ -217,6 +242,11 @@ func (e *Executor) buildLocally(ctx context.Context, buildID string, b *Build, s
 
 // githubToken returns a fresh installation token for pushing to GitHub.
 func (e *Executor) githubToken(ctx context.Context) (string, error) {
+	// Prefer a user token (device-flow / PAT): it works without a GitHub App,
+	// which is the standard path for self-hosted installs.
+	if userToken, _, uerr := e.ghStore.LoadUserToken(ctx); uerr == nil && userToken != "" {
+		return userToken, nil
+	}
 	creds, err := e.ghStore.LoadApp(ctx)
 	if err != nil || creds == nil {
 		return "", err

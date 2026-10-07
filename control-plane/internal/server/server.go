@@ -249,6 +249,7 @@ func (s *Server) registerRoutes() {
 		// GitHub App integration helpers.
 		r.Get("/github/token", s.handleGithubToken)
 		r.Get("/github/status", s.handleGithubStatus)
+		r.Post("/github/user-token", s.handleSetGithubUserToken)
 
 		// Platform settings — update a single key (admin only).
 		if s.setupHandler != nil {
@@ -314,6 +315,30 @@ func (s *Server) handleGithubToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"token": tok, "type": tokType})
+}
+
+// handleSetGithubUserToken stores a GitHub user access token obtained by the
+// CLI via the device flow (or a PAT). This is the self-hosted path: the token
+// is the user's own, scoped to what they granted, and lets Bordo create repos,
+// run builds in GitHub Actions, and pull private images.
+func (s *Server) handleSetGithubUserToken(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Token == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "token required"})
+		return
+	}
+	if s.ghStore == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "github store unavailable"})
+		return
+	}
+	login, _ := githubpkg.GetCurrentUserLogin(req.Token)
+	if err := s.ghStore.SaveUserToken(r.Context(), req.Token, login, time.Time{}); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "connected", "login": login})
 }
 
 func (s *Server) handleGithubStatus(w http.ResponseWriter, r *http.Request) {
