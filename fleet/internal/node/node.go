@@ -9,12 +9,16 @@ package node
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"text/template"
 	"time"
@@ -30,15 +34,16 @@ const DefaultKubeconfigPath = "/etc/rancher/k3s/k3s.yaml"
 // Config is the node agent's runtime configuration, normally from env vars set
 // by install-node.sh.
 type Config struct {
-	CPURL          string // BORDO_CP_URL — control-plane base URL, reachable from this VM
-	JoinToken      string // BORDO_JOIN_TOKEN — one-time token from `bordo region add`
-	NodeName       string // BORDO_NODE_NAME — defaults to hostname
-	K3sVersion     string // BORDO_K3S_VERSION — pinned k3s version
-	AdvertiseAddr   string // BORDO_NODE_ADVERTISE_ADDR — address the CP should use to reach the API server
-	KubeconfigPath  string // BORDO_KUBECONFIG_PATH — defaults to DefaultKubeconfigPath
-	ReconcilerImage string // BORDO_RECONCILER_IMAGE — on-cluster reconciler image
-	AppsNamespace   string // BORDO_APPS_NAMESPACE — namespace apps deploy into
-	SkipK3s         bool   // BORDO_NODE_SKIP_K3S=1 — dry run, skip the actual install (testing)
+	CPURL            string // BORDO_CP_URL — control-plane base URL, reachable from this VM
+	JoinToken        string // BORDO_JOIN_TOKEN — one-time token from `bordo region add`
+	NodeName         string // BORDO_NODE_NAME — defaults to hostname
+	K3sVersion       string // BORDO_K3S_VERSION — pinned k3s version
+	K3sInstallSHA256 string // BORDO_K3S_INSTALL_SHA256 — expected sha256 of the k3s install script
+	AdvertiseAddr    string // BORDO_NODE_ADVERTISE_ADDR — address the CP should use to reach the API server
+	KubeconfigPath   string // BORDO_KUBECONFIG_PATH — defaults to DefaultKubeconfigPath
+	ReconcilerImage  string // BORDO_RECONCILER_IMAGE — on-cluster reconciler image
+	AppsNamespace    string // BORDO_APPS_NAMESPACE — namespace apps deploy into
+	SkipK3s          bool   // BORDO_NODE_SKIP_K3S=1 — dry run, skip the actual install (testing)
 }
 
 // DefaultReconcilerImage is the on-cluster reconciler container image.
@@ -57,15 +62,16 @@ func envOr(key, def string) string {
 // ConfigFromEnv builds a Config from environment variables and validates it.
 func ConfigFromEnv() (Config, error) {
 	c := Config{
-		CPURL:          os.Getenv("BORDO_CP_URL"),
-		JoinToken:      os.Getenv("BORDO_JOIN_TOKEN"),
-		NodeName:       os.Getenv("BORDO_NODE_NAME"),
-		K3sVersion:     envOr("BORDO_K3S_VERSION", DefaultK3sVersion),
-		AdvertiseAddr:   os.Getenv("BORDO_NODE_ADVERTISE_ADDR"),
-		KubeconfigPath:  envOr("BORDO_KUBECONFIG_PATH", DefaultKubeconfigPath),
-		ReconcilerImage: envOr("BORDO_RECONCILER_IMAGE", DefaultReconcilerImage),
-		AppsNamespace:   envOr("BORDO_APPS_NAMESPACE", DefaultAppsNamespace),
-		SkipK3s:         os.Getenv("BORDO_NODE_SKIP_K3S") == "1",
+		CPURL:            os.Getenv("BORDO_CP_URL"),
+		JoinToken:        os.Getenv("BORDO_JOIN_TOKEN"),
+		NodeName:         os.Getenv("BORDO_NODE_NAME"),
+		K3sVersion:       envOr("BORDO_K3S_VERSION", DefaultK3sVersion),
+		K3sInstallSHA256: os.Getenv("BORDO_K3S_INSTALL_SHA256"),
+		AdvertiseAddr:    os.Getenv("BORDO_NODE_ADVERTISE_ADDR"),
+		KubeconfigPath:   envOr("BORDO_KUBECONFIG_PATH", DefaultKubeconfigPath),
+		ReconcilerImage:  envOr("BORDO_RECONCILER_IMAGE", DefaultReconcilerImage),
+		AppsNamespace:    envOr("BORDO_APPS_NAMESPACE", DefaultAppsNamespace),
+		SkipK3s:          os.Getenv("BORDO_NODE_SKIP_K3S") == "1",
 	}
 	if c.NodeName == "" {
 		c.NodeName, _ = os.Hostname()
@@ -148,15 +154,67 @@ func postJSON(ctx context.Context, httpc *http.Client, url string, body, out any
 // unit-tested — it mutates the host — so it is isolated here and guarded by
 // Config.SkipK3s. The installer verifies the k3s binary against the published
 // checksum for the pinned version (INSTALL_K3S_VERSION) as its integrity check.
-func installK3s(ctx context.Context, version string) error {
-	script := `set -e
-curl -sfL https://get.k3s.io -o /tmp/k3s-install.sh
-INSTALL_K3S_VERSION="` + version + `" sh /tmp/k3s-install.sh --write-kubeconfig-mode 644
-rm -f /tmp/k3s-install.sh`
-	cmd := exec.CommandContext(ctx, "sh", "-c", script)
+func installK3s(ctx context.Context, version, expectedSHA string) error {
+	scriptPath := filepath.Join(os.TempDir(), "k3s-install.sh")
+	if err := downloadFile(ctx, "https://get.k3s.io", scriptPath); err != nil {
+		return fmt.Errorf("download k3s installer: %w", err)
+	}
+	defer os.Remove(scriptPath)
+
+	// Supply-chain hardening: verify the installer script against a pinned
+	// sha256 when provided. The pinned INSTALL_K3S_VERSION additionally makes
+	// the installer verify the k3s binary against the release's own checksums.
+	if expectedSHA != "" {
+		if err := verifyFileSHA256(scriptPath, expectedSHA); err != nil {
+			return fmt.Errorf("k3s installer checksum: %w", err)
+		}
+		fmt.Println("[bordo-node] k3s installer checksum verified")
+	} else {
+		fmt.Println("[bordo-node] warning: BORDO_K3S_INSTALL_SHA256 not set — the installer script is not pinned (the k3s binary is still verified against the pinned version)")
+	}
+
+	cmd := exec.CommandContext(ctx, "sh", scriptPath, "--write-kubeconfig-mode", "644")
+	cmd.Env = append(os.Environ(), "INSTALL_K3S_VERSION="+version)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// downloadFile fetches url to dest.
+func downloadFile(ctx context.Context, url, dest string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("GET %s: %s", url, resp.Status)
+	}
+	f, err := os.Create(dest)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = io.Copy(f, resp.Body)
+	return err
+}
+
+// verifyFileSHA256 checks that the file at path matches expected (hex sha256).
+func verifyFileSHA256(path, expected string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(data)
+	got := hex.EncodeToString(sum[:])
+	if !strings.EqualFold(got, strings.TrimSpace(expected)) {
+		return fmt.Errorf("sha256 mismatch: got %s, want %s", got, expected)
+	}
+	return nil
 }
 
 type reconcilerVars struct {
@@ -291,7 +349,7 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 
 	fmt.Printf("[bordo-node] installing k3s %s...\n", cfg.K3sVersion)
-	if err := installK3s(ctx, cfg.K3sVersion); err != nil {
+	if err := installK3s(ctx, cfg.K3sVersion, cfg.K3sInstallSHA256); err != nil {
 		return fmt.Errorf("install k3s: %w", err)
 	}
 

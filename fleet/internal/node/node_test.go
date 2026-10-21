@@ -132,6 +132,37 @@ func TestRenderReconcilerManifests(t *testing.T) {
 	}
 }
 
+func TestVerifyFileSHA256(t *testing.T) {
+	f := t.TempDir() + "/data"
+	if err := os.WriteFile(f, []byte("hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// echo -n hello | sha256sum
+	const helloSHA = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+	if err := verifyFileSHA256(f, helloSHA); err != nil {
+		t.Fatalf("matching sha should pass: %v", err)
+	}
+	if err := verifyFileSHA256(f, "deadbeef"); err == nil {
+		t.Fatal("mismatched sha should fail")
+	}
+}
+
+func TestDownloadFile(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("script-body"))
+	}))
+	defer srv.Close()
+
+	dest := t.TempDir() + "/dl"
+	if err := downloadFile(context.Background(), srv.URL, dest); err != nil {
+		t.Fatalf("download: %v", err)
+	}
+	b, _ := os.ReadFile(dest)
+	if string(b) != "script-body" {
+		t.Fatalf("downloaded %q", string(b))
+	}
+}
+
 func contains(haystack, needle string) bool {
 	return len(haystack) >= len(needle) && (indexOf(haystack, needle) >= 0)
 }
