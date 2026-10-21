@@ -28,6 +28,9 @@ jobs:
           - name: bordo-console
             image: ghcr.io/hasangenc0/bordo-console
             dockerfile: deploy/bordo/Dockerfile.console
+          - name: bordo-reconciler
+            image: ghcr.io/hasangenc0/bordo-reconciler
+            dockerfile: deploy/bordo/Dockerfile.reconciler
 
     steps:
       - uses: actions/checkout@v4

@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"text/template"
 	"time"
 )
 
@@ -33,10 +34,18 @@ type Config struct {
 	JoinToken      string // BORDO_JOIN_TOKEN — one-time token from `bordo region add`
 	NodeName       string // BORDO_NODE_NAME — defaults to hostname
 	K3sVersion     string // BORDO_K3S_VERSION — pinned k3s version
-	AdvertiseAddr  string // BORDO_NODE_ADVERTISE_ADDR — address the CP should use to reach the API server
-	KubeconfigPath string // BORDO_KUBECONFIG_PATH — defaults to DefaultKubeconfigPath
-	SkipK3s        bool   // BORDO_NODE_SKIP_K3S=1 — dry run, skip the actual install (testing)
+	AdvertiseAddr   string // BORDO_NODE_ADVERTISE_ADDR — address the CP should use to reach the API server
+	KubeconfigPath  string // BORDO_KUBECONFIG_PATH — defaults to DefaultKubeconfigPath
+	ReconcilerImage string // BORDO_RECONCILER_IMAGE — on-cluster reconciler image
+	AppsNamespace   string // BORDO_APPS_NAMESPACE — namespace apps deploy into
+	SkipK3s         bool   // BORDO_NODE_SKIP_K3S=1 — dry run, skip the actual install (testing)
 }
+
+// DefaultReconcilerImage is the on-cluster reconciler container image.
+const DefaultReconcilerImage = "ghcr.io/hasangenc0/bordo-reconciler:latest"
+
+// DefaultAppsNamespace is where user workloads are deployed.
+const DefaultAppsNamespace = "bordo-apps"
 
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
@@ -52,9 +61,11 @@ func ConfigFromEnv() (Config, error) {
 		JoinToken:      os.Getenv("BORDO_JOIN_TOKEN"),
 		NodeName:       os.Getenv("BORDO_NODE_NAME"),
 		K3sVersion:     envOr("BORDO_K3S_VERSION", DefaultK3sVersion),
-		AdvertiseAddr:  os.Getenv("BORDO_NODE_ADVERTISE_ADDR"),
-		KubeconfigPath: envOr("BORDO_KUBECONFIG_PATH", DefaultKubeconfigPath),
-		SkipK3s:        os.Getenv("BORDO_NODE_SKIP_K3S") == "1",
+		AdvertiseAddr:   os.Getenv("BORDO_NODE_ADVERTISE_ADDR"),
+		KubeconfigPath:  envOr("BORDO_KUBECONFIG_PATH", DefaultKubeconfigPath),
+		ReconcilerImage: envOr("BORDO_RECONCILER_IMAGE", DefaultReconcilerImage),
+		AppsNamespace:   envOr("BORDO_APPS_NAMESPACE", DefaultAppsNamespace),
+		SkipK3s:         os.Getenv("BORDO_NODE_SKIP_K3S") == "1",
 	}
 	if c.NodeName == "" {
 		c.NodeName, _ = os.Hostname()
@@ -89,13 +100,20 @@ func redeem(ctx context.Context, httpc *http.Client, cpURL, joinToken string) (r
 }
 
 // register sends the cluster kubeconfig back to the control plane, consuming the
-// single-use register token.
-func register(ctx context.Context, httpc *http.Client, cpURL, region, registerToken, kubeconfig string) error {
-	return postJSON(ctx, httpc, cpURL+"/fleet/register", map[string]string{
+// single-use register token, and returns the region's long-lived cluster token
+// (ADR-0006 Phase 2) the on-cluster reconciler will use to pull desired state.
+func register(ctx context.Context, httpc *http.Client, cpURL, region, registerToken, kubeconfig string) (string, error) {
+	var out struct {
+		ClusterToken string `json:"cluster_token"`
+	}
+	if err := postJSON(ctx, httpc, cpURL+"/fleet/register", map[string]string{
 		"region":         region,
 		"register_token": registerToken,
 		"kubeconfig":     kubeconfig,
-	}, nil)
+	}, &out); err != nil {
+		return "", err
+	}
+	return out.ClusterToken, nil
 }
 
 func postJSON(ctx context.Context, httpc *http.Client, url string, body, out any) error {
@@ -141,6 +159,106 @@ rm -f /tmp/k3s-install.sh`
 	return cmd.Run()
 }
 
+type reconcilerVars struct {
+	CPURL        string
+	ClusterToken string
+	Image        string
+	Namespace    string
+}
+
+// renderReconcilerManifests produces the Kubernetes manifests that install the
+// on-cluster reconciler (ADR-0006 Phase 2): the reconciler runs in bordo-system
+// with a ServiceAccount bound to a Role scoped to the apps namespace only — it
+// is NOT cluster-admin. The cluster token is delivered via a Secret.
+func renderReconcilerManifests(v reconcilerVars) string {
+	var buf bytes.Buffer
+	_ = reconcilerTmpl.Execute(&buf, v)
+	return buf.String()
+}
+
+var reconcilerTmpl = template.Must(template.New("reconciler").Parse(`apiVersion: v1
+kind: Namespace
+metadata:
+  name: bordo-system
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{.Namespace}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bordo-reconciler
+  namespace: bordo-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: bordo-reconciler
+  namespace: {{.Namespace}}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["services", "pods", "configmaps", "secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: bordo-reconciler
+  namespace: {{.Namespace}}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: bordo-reconciler
+subjects:
+  - kind: ServiceAccount
+    name: bordo-reconciler
+    namespace: bordo-system
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: bordo-reconciler-creds
+  namespace: bordo-system
+type: Opaque
+stringData:
+  cluster-token: {{.ClusterToken}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bordo-reconciler
+  namespace: bordo-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bordo-reconciler
+  template:
+    metadata:
+      labels:
+        app: bordo-reconciler
+    spec:
+      serviceAccountName: bordo-reconciler
+      containers:
+        - name: reconciler
+          image: {{.Image}}
+          env:
+            - name: BORDO_CP_URL
+              value: "{{.CPURL}}"
+            - name: BORDO_APPS_NAMESPACE
+              value: "{{.Namespace}}"
+            - name: BORDO_CLUSTER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: bordo-reconciler-creds
+                  key: cluster-token
+`))
+
 // readKubeconfig reads the k3s kubeconfig and rewrites the server address from
 // the loopback default to an address the control plane can reach.
 func readKubeconfig(path, advertiseAddr string) (string, error) {
@@ -183,9 +301,33 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 
 	fmt.Println("[bordo-node] registering cluster with control plane...")
-	if err := register(ctx, httpc, cfg.CPURL, rr.Region, rr.RegisterToken, kc); err != nil {
+	clusterToken, err := register(ctx, httpc, cfg.CPURL, rr.Region, rr.RegisterToken, kc)
+	if err != nil {
 		return fmt.Errorf("register: %w", err)
 	}
-	fmt.Printf("[bordo-node] node registered — region %q is ready for deploys\n", rr.Region)
+
+	fmt.Println("[bordo-node] deploying the on-cluster reconciler...")
+	manifests := renderReconcilerManifests(reconcilerVars{
+		CPURL:        cfg.CPURL,
+		ClusterToken: clusterToken,
+		Image:        cfg.ReconcilerImage,
+		Namespace:    cfg.AppsNamespace,
+	})
+	if err := kubectlApply(ctx, cfg.KubeconfigPath, manifests); err != nil {
+		return fmt.Errorf("deploy reconciler: %w", err)
+	}
+
+	fmt.Printf("[bordo-node] node registered — region %q is reconciling via the on-cluster agent\n", rr.Region)
 	return nil
+}
+
+// kubectlApply pipes manifests to `kubectl apply` using the local k3s
+// kubeconfig. Used during bootstrap to install the reconciler; after that the
+// reconciler applies app manifests itself.
+func kubectlApply(ctx context.Context, kubeconfigPath, manifests string) error {
+	cmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath, "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(manifests)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }

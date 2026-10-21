@@ -89,16 +89,60 @@ func TestRegister(t *testing.T) {
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
 		_ = json.NewDecoder(r.Body).Decode(&got)
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "registered", "region": "us-east"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "registered", "region": "us-east", "cluster_token": "CT"})
 	}))
 	defer srv.Close()
 
-	if err := register(context.Background(), srv.Client(), srv.URL, "us-east", "regtok", "KUBECONFIG"); err != nil {
+	ct, err := register(context.Background(), srv.Client(), srv.URL, "us-east", "regtok", "KUBECONFIG")
+	if err != nil {
 		t.Fatalf("register: %v", err)
+	}
+	if ct != "CT" {
+		t.Fatalf("cluster token = %q, want CT", ct)
 	}
 	if got["region"] != "us-east" || got["register_token"] != "regtok" || got["kubeconfig"] != "KUBECONFIG" {
 		t.Fatalf("unexpected register body: %+v", got)
 	}
+}
+
+func TestRenderReconcilerManifests(t *testing.T) {
+	m := renderReconcilerManifests(reconcilerVars{
+		CPURL:        "https://cp:7401",
+		ClusterToken: "CT-SECRET",
+		Image:        "ghcr.io/x/bordo-reconciler:latest",
+		Namespace:    "bordo-apps",
+	})
+	for _, want := range []string{
+		"kind: Namespace",
+		"name: bordo-system",
+		"kind: Role",            // namespace-scoped RBAC, not ClusterRole
+		"namespace: bordo-apps", // Role scoped to the apps namespace
+		"serviceAccountName: bordo-reconciler",
+		"cluster-token: CT-SECRET",
+		"image: ghcr.io/x/bordo-reconciler:latest",
+		`value: "https://cp:7401"`,
+	} {
+		if !contains(m, want) {
+			t.Errorf("rendered manifests missing %q", want)
+		}
+	}
+	// It must NOT grant cluster-admin / ClusterRole.
+	if contains(m, "ClusterRole") {
+		t.Error("reconciler must use a namespace Role, not a ClusterRole")
+	}
+}
+
+func contains(haystack, needle string) bool {
+	return len(haystack) >= len(needle) && (indexOf(haystack, needle) >= 0)
+}
+
+func indexOf(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
 }
 
 func TestReadKubeconfigPatchesAddress(t *testing.T) {
