@@ -297,6 +297,39 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
+// Region is a fleet region (k3s cluster).
+type Region struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
+// JoinToken is a one-time node-join credential (ADR-0006 Phase 1).
+type JoinToken struct {
+	ID        string `json:"id"`
+	Token     string `json:"token"`
+	Region    string `json:"region"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+// CreateRegion registers a new region.
+func (c *Client) CreateRegion(ctx context.Context, name string) (*Region, error) {
+	var out Region
+	if err := c.post(ctx, "/v1/regions", map[string]string{"name": name}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// MintJoinToken mints a single-use node-join token for a region.
+func (c *Client) MintJoinToken(ctx context.Context, region string) (*JoinToken, error) {
+	var out JoinToken
+	if err := c.post(ctx, "/v1/regions/"+region+"/join-tokens", struct{}{}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 func (c *Client) post(ctx context.Context, path string, body, out any) error {
 	data, err := json.Marshal(body)
 	if err != nil {

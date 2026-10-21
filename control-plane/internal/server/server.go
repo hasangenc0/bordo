@@ -214,6 +214,11 @@ func (s *Server) registerRoutes() {
 	// after GitHub redirects; no token needed (the user is on VPN).
 	s.router.Mount("/github", s.githubHandler.Routes())
 
+	// Node-join redeem (ADR-0006 Phase 1) — node-facing, no admin token. It is
+	// gated by the single-use join token in the body; the node agent calls it
+	// outbound during bootstrap.
+	s.router.Post("/fleet/redeem", s.handleFleetRedeem)
+
 	// Versioned API — protected by bearer token when BORDO_AUTH_TOKEN is set.
 	s.router.Route("/v1", func(r chi.Router) {
 		r.Use(s.requireToken())
@@ -339,6 +344,26 @@ func (s *Server) handleSetGithubUserToken(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "connected", "login": login})
+}
+
+// handleFleetRedeem consumes a single-use node-join token (ADR-0006 Phase 1).
+// The response is uniform on any failure so it cannot be used as an oracle to
+// distinguish "wrong token" from "expired"/"used"/"revoked".
+func (s *Server) handleFleetRedeem(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Token == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "token required"})
+		return
+	}
+	region, err := fleet.New(s.db).RedeemJoinToken(r.Context(), req.Token)
+	if err != nil {
+		s.logger.Warn("fleet join redeem rejected", "error", err)
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired join token"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"region": region, "status": "redeemed"})
 }
 
 func (s *Server) handleGithubStatus(w http.ResponseWriter, r *http.Request) {

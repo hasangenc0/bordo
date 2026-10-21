@@ -32,7 +32,40 @@ func NewHandler(store *Store, logger *slog.Logger) http.Handler {
 	r.Post("/{name}/bootstrap", h.bootstrap)
 	r.Post("/{name}/health", h.reportHealth)
 	r.Get("/{name}/health", h.getHealth)
+	r.Post("/{name}/join-tokens", h.mintJoinToken)
 	return r
+}
+
+// mintJoinToken issues a single-use node-join token for a region (ADR-0006
+// Phase 1). This route is admin-authed (mounted under the protected /v1 group).
+// The plaintext token is returned exactly once.
+func (h *handler) mintJoinToken(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(chi.URLParam(r, "name"))
+	if name == "" {
+		writeErr(w, http.StatusBadRequest, "region name required")
+		return
+	}
+	if _, err := h.store.GetRegionByName(r.Context(), name); err != nil {
+		writeErr(w, http.StatusNotFound, fmt.Sprintf("region %q not found", name))
+		return
+	}
+	id, secret, err := h.store.MintJoinToken(r.Context(), name, 0)
+	if err != nil {
+		h.logger.Error("mint join token", "region", name, "error", err)
+		writeErr(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	jt, err := h.store.GetJoinToken(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"id":         id,
+		"token":      secret,
+		"region":     name,
+		"expires_at": jt.ExpiresAt,
+	})
 }
 
 type handler struct {
