@@ -134,6 +134,23 @@ larger lift and can follow once the deploy path is otherwise proven.
 
 ## Status note
 
-Phase 0 is implemented. This ADR is **Proposed**; Phases 1–3 are not yet built. The
-immediate next step is to validate the Phase 0 deploy path end-to-end (prove k3s bootstrap
-+ deploy works at all), then implement Phase 1.
+Implementation progress (code-complete + unit-tested unless noted; the live k3s/cluster
+paths are isolated and gated, pending validation on a real VM):
+
+- **Phase 0:** implemented (SSH push + admin kubeconfig) — remains the fallback.
+- **Phase 1 (outbound join):** join-token core, mint/redeem/register endpoints,
+  `bordo region` CLI, and the `bordo-node` agent. Eliminates stored SSH keys.
+- **Phase 2 (pull reconciler):** cluster credential, `/fleet/desired-state` feed,
+  `release.DesiredState`, the `bordo-reconciler` on-cluster agent, and namespace-scoped
+  RBAC installed at join. The control plane has no push path once a region reconciles.
+- **Phase 3 (partial):** k3s installer is checksum-verified with a pinned version. Two
+  items remain and are intentionally **not** rushed:
+  - *Scoped `read:packages` GHCR tokens* require a GitHub App installation (GitHub does
+    not let a device-flow user token be programmatically scoped down), so this depends on
+    supporting an App-based pull identity, not just more code.
+  - *External KMS for the settings master key* needs real KMS infrastructure plus a
+    careful re-encryption migration of existing secrets.
+
+**Gating milestone:** a single live VM run must validate Phases 1+2 end to end
+(`bordo region add` → run the node command on a VM → k3s installs, node registers,
+reconciler pulls and deploys) before any of this is called production-ready.
