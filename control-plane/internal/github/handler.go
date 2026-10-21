@@ -42,6 +42,14 @@ func (h *Handler) Routes() http.Handler {
 // GetInstallationTokenFromStore generates a fresh installation token using stored credentials.
 // Used by the server to expose /v1/github/token.
 func (h *Handler) GetInstallationTokenFromStore(ctx context.Context) (string, string, error) {
+	// Prefer a user token (device-flow / PAT): it works without a GitHub App,
+	// which is the standard self-hosted path. Only fall through to the App
+	// installation token when no user token is stored.
+	if userToken, expiresAt, uerr := h.store.LoadUserToken(ctx); uerr == nil && userToken != "" {
+		if expiresAt.IsZero() || time.Now().Before(expiresAt) {
+			return userToken, "user", nil
+		}
+	}
 	creds, err := h.store.LoadApp(ctx)
 	if err != nil || creds == nil {
 		return "", "", err
