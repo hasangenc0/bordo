@@ -33,6 +33,7 @@ jobs:
           PKG="github.com/hasangenc0/bordo/cli/cmd"
           LDFLAGS="-s -w -X ${PKG}.Version=${TAG} -X ${PKG}.Commit=${COMMIT} -X ${PKG}.BuildTime=${BTIME}"
           mkdir -p dist
+          # bordo CLI — Linux + macOS.
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
             os="${target%/*}"; arch="${target#*/}"
             echo "→ building bordo ${os}/${arch}"
@@ -40,6 +41,16 @@ jobs:
               go build -trimpath -ldflags "$LDFLAGS" -o dist/bordo ./cli/bordo
             tar -czf "dist/bordo_${os}_${arch}.tar.gz" -C dist bordo
             rm dist/bordo
+          done
+          # bordo-node agent — Linux only (it runs on target VMs). Built from the
+          # fleet module via the go.work workspace.
+          for target in linux/amd64 linux/arm64; do
+            os="${target%/*}"; arch="${target#*/}"
+            echo "→ building bordo-node ${os}/${arch}"
+            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 \
+              go build -trimpath -ldflags "-s -w" -o dist/bordo-node ./fleet/bordo-node
+            tar -czf "dist/bordo-node_${os}_${arch}.tar.gz" -C dist bordo-node
+            rm dist/bordo-node
           done
           (cd dist && sha256sum *.tar.gz > checksums.txt)
           ls -la dist

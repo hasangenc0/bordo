@@ -218,6 +218,7 @@ func (s *Server) registerRoutes() {
 	// gated by the single-use join token in the body; the node agent calls it
 	// outbound during bootstrap.
 	s.router.Post("/fleet/redeem", s.handleFleetRedeem)
+	s.router.Post("/fleet/register", s.handleFleetRegister)
 
 	// Versioned API — protected by bearer token when BORDO_AUTH_TOKEN is set.
 	s.router.Route("/v1", func(r chi.Router) {
@@ -357,13 +358,58 @@ func (s *Server) handleFleetRedeem(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "token required"})
 		return
 	}
-	region, err := fleet.New(s.db).RedeemJoinToken(r.Context(), req.Token)
+	st := fleet.New(s.db)
+	region, err := st.RedeemJoinToken(r.Context(), req.Token)
 	if err != nil {
 		s.logger.Warn("fleet join redeem rejected", "error", err)
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired join token"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"region": region, "status": "redeemed"})
+	// Issue a single-use register token (same tested mechanism) that the node
+	// uses to complete registration after k3s is up. Only the successful
+	// redeemer receives it, so register is gated to that one node.
+	_, registerToken, err := st.MintJoinToken(r.Context(), region, 0)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"region":         region,
+		"register_token": registerToken,
+		"status":         "redeemed",
+	})
+}
+
+// handleFleetRegister completes node registration: the node sends its cluster
+// kubeconfig along with the single-use register token it got from redeem. The
+// token both authenticates the call and pins it to one region.
+//
+// NOTE: storing the kubeconfig here is transitional — ADR-0006 Phase 2 replaces
+// it with an on-cluster pull reconciler so the control plane holds no admin
+// kubeconfig at all.
+func (s *Server) handleFleetRegister(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Region        string `json:"region"`
+		Kubeconfig    string `json:"kubeconfig"`
+		RegisterToken string `json:"register_token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
+		req.Region == "" || req.Kubeconfig == "" || req.RegisterToken == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "region, kubeconfig, register_token required"})
+		return
+	}
+	st := fleet.New(s.db)
+	region, err := st.RedeemJoinToken(r.Context(), req.RegisterToken)
+	if err != nil || region != req.Region {
+		s.logger.Warn("fleet register rejected", "error", err, "region", req.Region)
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired register token"})
+		return
+	}
+	if err := st.UpdateKubeconfig(r.Context(), req.Region, req.Kubeconfig, "healthy"); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "registered", "region": region})
 }
 
 func (s *Server) handleGithubStatus(w http.ResponseWriter, r *http.Request) {
