@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/hasangenc0/bordo/control-plane/internal/approval"
@@ -219,6 +220,7 @@ func (s *Server) registerRoutes() {
 	// outbound during bootstrap.
 	s.router.Post("/fleet/redeem", s.handleFleetRedeem)
 	s.router.Post("/fleet/register", s.handleFleetRegister)
+	s.router.Get("/fleet/desired-state", s.handleFleetDesiredState)
 
 	// Versioned API — protected by bearer token when BORDO_AUTH_TOKEN is set.
 	s.router.Route("/v1", func(r chi.Router) {
@@ -409,7 +411,40 @@ func (s *Server) handleFleetRegister(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "registered", "region": region})
+	// Issue the region's reconciler credential (ADR-0006 Phase 2): a revocable,
+	// region-scoped token the on-cluster reconciler uses to pull desired state.
+	clusterToken, err := st.IssueClusterToken(r.Context(), req.Region)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":        "registered",
+		"region":        region,
+		"cluster_token": clusterToken,
+	})
+}
+
+// handleFleetDesiredState serves the manifests a region should be running
+// (ADR-0006 Phase 2). It is pulled by the on-cluster reconciler and gated by the
+// region's cluster token (uniform 401 on any failure).
+func (s *Server) handleFleetDesiredState(w http.ResponseWriter, r *http.Request) {
+	token := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+	if token == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "cluster token required"})
+		return
+	}
+	region, err := fleet.New(s.db).ValidateClusterToken(r.Context(), token)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid cluster token"})
+		return
+	}
+	manifests, err := release.DesiredState(r.Context(), s.db, region)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"region": region, "manifests": manifests})
 }
 
 func (s *Server) handleGithubStatus(w http.ResponseWriter, r *http.Request) {
