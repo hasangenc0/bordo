@@ -39,6 +39,7 @@ type Config struct {
 	NodeName         string // BORDO_NODE_NAME — defaults to hostname
 	K3sVersion       string // BORDO_K3S_VERSION — pinned k3s version
 	K3sInstallSHA256 string // BORDO_K3S_INSTALL_SHA256 — expected sha256 of the k3s install script
+	K3sExec          string // BORDO_K3S_EXEC — k3s server flags (INSTALL_K3S_EXEC); default trims memory
 	AdvertiseAddr    string // BORDO_NODE_ADVERTISE_ADDR — address the CP should use to reach the API server
 	KubeconfigPath   string // BORDO_KUBECONFIG_PATH — defaults to DefaultKubeconfigPath
 	ReconcilerImage  string // BORDO_RECONCILER_IMAGE — on-cluster reconciler image
@@ -51,6 +52,11 @@ const DefaultReconcilerImage = "ghcr.io/hasangenc0/bordo-reconciler:latest"
 
 // DefaultAppsNamespace is where user workloads are deployed.
 const DefaultAppsNamespace = "bordo-apps"
+
+// DefaultK3sExec trims k3s to the essentials: no Traefik ingress, no ServiceLB,
+// no metrics-server. These components add hundreds of MB and aren't needed for
+// Bordo's deploy flow, which matters on small/shared VMs (ADR-0006 Phase 3).
+const DefaultK3sExec = "--disable traefik --disable servicelb --disable metrics-server"
 
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
@@ -67,6 +73,7 @@ func ConfigFromEnv() (Config, error) {
 		NodeName:         os.Getenv("BORDO_NODE_NAME"),
 		K3sVersion:       envOr("BORDO_K3S_VERSION", DefaultK3sVersion),
 		K3sInstallSHA256: os.Getenv("BORDO_K3S_INSTALL_SHA256"),
+		K3sExec:          envOr("BORDO_K3S_EXEC", DefaultK3sExec),
 		AdvertiseAddr:    os.Getenv("BORDO_NODE_ADVERTISE_ADDR"),
 		KubeconfigPath:   envOr("BORDO_KUBECONFIG_PATH", DefaultKubeconfigPath),
 		ReconcilerImage:  envOr("BORDO_RECONCILER_IMAGE", DefaultReconcilerImage),
@@ -154,7 +161,7 @@ func postJSON(ctx context.Context, httpc *http.Client, url string, body, out any
 // unit-tested — it mutates the host — so it is isolated here and guarded by
 // Config.SkipK3s. The installer verifies the k3s binary against the published
 // checksum for the pinned version (INSTALL_K3S_VERSION) as its integrity check.
-func installK3s(ctx context.Context, version, expectedSHA string) error {
+func installK3s(ctx context.Context, version, expectedSHA, k3sExec string) error {
 	scriptPath := filepath.Join(os.TempDir(), "k3s-install.sh")
 	if err := downloadFile(ctx, "https://get.k3s.io", scriptPath); err != nil {
 		return fmt.Errorf("download k3s installer: %w", err)
@@ -174,7 +181,10 @@ func installK3s(ctx context.Context, version, expectedSHA string) error {
 	}
 
 	cmd := exec.CommandContext(ctx, "sh", scriptPath, "--write-kubeconfig-mode", "644")
-	cmd.Env = append(os.Environ(), "INSTALL_K3S_VERSION="+version)
+	cmd.Env = append(os.Environ(),
+		"INSTALL_K3S_VERSION="+version,
+		"INSTALL_K3S_EXEC="+k3sExec,
+	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -349,7 +359,7 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 
 	fmt.Printf("[bordo-node] installing k3s %s...\n", cfg.K3sVersion)
-	if err := installK3s(ctx, cfg.K3sVersion, cfg.K3sInstallSHA256); err != nil {
+	if err := installK3s(ctx, cfg.K3sVersion, cfg.K3sInstallSHA256, cfg.K3sExec); err != nil {
 		return fmt.Errorf("install k3s: %w", err)
 	}
 

@@ -28,6 +28,27 @@ func TestConfigFromEnv(t *testing.T) {
 	}
 }
 
+func TestConfigK3sExecDefaultsToTrim(t *testing.T) {
+	t.Setenv("BORDO_CP_URL", "https://cp")
+	t.Setenv("BORDO_JOIN_TOKEN", "jt")
+	os.Unsetenv("BORDO_K3S_EXEC")
+	cfg, err := ConfigFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"--disable traefik", "--disable servicelb", "--disable metrics-server"} {
+		if !contains(cfg.K3sExec, want) {
+			t.Errorf("default K3sExec missing %q (got %q)", want, cfg.K3sExec)
+		}
+	}
+	// Override is honored.
+	t.Setenv("BORDO_K3S_EXEC", "--disable traefik")
+	cfg, _ = ConfigFromEnv()
+	if cfg.K3sExec != "--disable traefik" {
+		t.Fatalf("override K3sExec = %q", cfg.K3sExec)
+	}
+}
+
 func TestConfigFromEnvRequiresFields(t *testing.T) {
 	os.Unsetenv("BORDO_CP_URL")
 	os.Unsetenv("BORDO_JOIN_TOKEN")
