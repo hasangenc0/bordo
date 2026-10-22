@@ -39,7 +39,17 @@ func DeriveKey() ([32]byte, error) {
 	if v := os.Getenv("BORDO_SECRET_KEY"); v != "" {
 		return sha256.Sum256([]byte(v)), nil
 	}
-	dir := filepath.Join(os.Getenv("HOME"), ".bordo")
+	// Store the key next to the database so it lives on the same PERSISTENT
+	// volume. This previously used $HOME/.bordo, which in a container is
+	// ephemeral — every recreate regenerated the key and orphaned everything it
+	// had encrypted (e.g. the GitHub token). ADR-0006 secrets-at-rest hardening.
+	dir := ""
+	if sp := os.Getenv("BORDO_STORE_PATH"); sp != "" {
+		dir = filepath.Dir(sp)
+	}
+	if dir == "" || dir == "." {
+		dir = filepath.Join(os.Getenv("HOME"), ".bordo")
+	}
 	_ = os.MkdirAll(dir, 0700)
 	keyFile := filepath.Join(dir, "secret.key")
 	data, err := os.ReadFile(keyFile)
