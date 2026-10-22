@@ -73,6 +73,25 @@ type handler struct {
 	logger *slog.Logger
 }
 
+// RegionStaleAfter is how long a region can go without its on-cluster reconciler
+// pulling desired state before it's considered unreachable. It is a few times the
+// default reconcile interval (30s) to tolerate a missed cycle.
+const RegionStaleAfter = 90 * time.Second
+
+// deriveRegionStatus reports a region's live status from its last-pull time.
+// A region that has pulled recently is healthy; one that pulled but then went
+// quiet is unreachable; one that has never pulled keeps its stored status (e.g.
+// 'pending' right after join, or a legacy push-managed 'healthy').
+func deriveRegionStatus(stored string, lastPull sql.NullTime) string {
+	if !lastPull.Valid {
+		return stored
+	}
+	if time.Since(lastPull.Time) <= RegionStaleAfter {
+		return "healthy"
+	}
+	return "unreachable"
+}
+
 // NodeHealth is a single node's reported health.
 type NodeHealth struct {
 	Name          string    `json:"name"`
@@ -132,7 +151,9 @@ func (h *handler) getHealth(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		n.Ready = ready == 1
+		// A node is ready only if it reported ready AND its heartbeat is fresh;
+		// a stale heartbeat means the reconciler stopped pulling.
+		n.Ready = ready == 1 && heartbeat.Valid && time.Since(heartbeat.Time) <= RegionStaleAfter
 		if heartbeat.Valid {
 			n.LastHeartbeat = heartbeat.Time
 		}
@@ -178,6 +199,23 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 	}
 	if regions == nil {
 		regions = []*Region{}
+	}
+	// Derive live status from each region's last desired-state pull, so a region
+	// whose reconciler has gone quiet reads 'unreachable' instead of a latched
+	// 'healthy'. One cheap query, patched onto the stored rows.
+	pulls := map[string]sql.NullTime{}
+	if rows, qerr := h.store.db.QueryContext(r.Context(), `SELECT name, last_pull_at FROM regions`); qerr == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var name string
+			var lp sql.NullTime
+			if rows.Scan(&name, &lp) == nil {
+				pulls[name] = lp
+			}
+		}
+	}
+	for _, reg := range regions {
+		reg.Status = deriveRegionStatus(reg.Status, pulls[reg.Name])
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"regions": regions})
 }

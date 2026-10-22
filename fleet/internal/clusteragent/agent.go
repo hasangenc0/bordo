@@ -79,16 +79,18 @@ func New(cfg Config) *Agent {
 	}
 }
 
-// fetchDesiredState pulls the region's manifests from the control plane.
-func (a *Agent) fetchDesiredState(ctx context.Context) (string, error) {
+// fetchDesiredState pulls the region's manifests from the control plane, along
+// with the IDs of the releases included in the bundle (so the apply result can
+// be reported back).
+func (a *Agent) fetchDesiredState(ctx context.Context) (string, []string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.cfg.CPURL+"/fleet/desired-state", nil)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+a.cfg.ClusterToken)
 	resp, err := a.httpc.Do(req)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -99,29 +101,62 @@ func (a *Agent) fetchDesiredState(ctx context.Context) (string, error) {
 		if e.Error == "" {
 			e.Error = resp.Status
 		}
-		return "", fmt.Errorf("desired-state: %s", e.Error)
+		return "", nil, fmt.Errorf("desired-state: %s", e.Error)
 	}
 	var out struct {
-		Region    string `json:"region"`
-		Manifests string `json:"manifests"`
+		Region     string   `json:"region"`
+		Manifests  string   `json:"manifests"`
+		ReleaseIDs []string `json:"release_ids"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return out.Manifests, nil
+	return out.Manifests, out.ReleaseIDs, nil
+}
+
+// reportStatus tells the control plane which releases this cycle applied, so it
+// can advance them from reconciling to deployed (or failed). Best-effort: a
+// reporting hiccup must not stop the reconcile loop, so errors are only logged.
+func (a *Agent) reportStatus(ctx context.Context, releaseIDs []string, applyErr error) {
+	body := struct {
+		AppliedReleaseIDs []string `json:"applied_release_ids"`
+		Error             string   `json:"error"`
+	}{AppliedReleaseIDs: releaseIDs}
+	if applyErr != nil {
+		body.Error = applyErr.Error()
+	}
+	buf, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.cfg.CPURL+"/fleet/status", bytes.NewReader(buf))
+	if err != nil {
+		fmt.Printf("[bordo-reconciler] status report: %v\n", err)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+a.cfg.ClusterToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := a.httpc.Do(req)
+	if err != nil {
+		fmt.Printf("[bordo-reconciler] status report: %v\n", err)
+		return
+	}
+	resp.Body.Close()
 }
 
 // ReconcileOnce pulls desired state and applies it. Empty desired state is a
-// no-op (nothing to run yet), not an error.
+// no-op (nothing to run yet), not an error. After applying, it reports the
+// result so the control plane can advance the releases' status.
 func (a *Agent) ReconcileOnce(ctx context.Context) error {
-	manifests, err := a.fetchDesiredState(ctx)
+	manifests, releaseIDs, err := a.fetchDesiredState(ctx)
 	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(manifests) == "" {
 		return nil
 	}
-	return a.apply(ctx, a.cfg.Namespace, manifests)
+	applyErr := a.apply(ctx, a.cfg.Namespace, manifests)
+	if len(releaseIDs) > 0 {
+		a.reportStatus(ctx, releaseIDs, applyErr)
+	}
+	return applyErr
 }
 
 // Run reconciles immediately, then on every interval until ctx is cancelled. A

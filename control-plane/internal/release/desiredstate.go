@@ -13,25 +13,30 @@ import (
 //
 // "Active" means a release in reconciling or deployed status. When a project has
 // several, the most recently updated one wins.
-func DesiredState(ctx context.Context, db *sql.DB, region string) (string, error) {
+//
+// It also returns the IDs of the releases included in the manifest bundle, so the
+// reconciler can acknowledge which releases it applied (ADR-0006 Phase 2 feedback
+// loop) and the control plane can advance them from reconciling to deployed.
+func DesiredState(ctx context.Context, db *sql.DB, region string) (string, []string, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT project_id, image_tag, strategy, expose, expose_host
+		`SELECT id, project_id, image_tag, strategy, expose, expose_host
 		 FROM bordo_releases
 		 WHERE region = ? AND status IN ('reconciling','deployed')
 		 ORDER BY project_id, updated_at DESC`, region)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	defer rows.Close()
 
 	var (
-		manifests []string
-		seen      = map[string]bool{}
+		manifests  []string
+		releaseIDs []string
+		seen       = map[string]bool{}
 	)
 	for rows.Next() {
-		var projectID, imageTag, strategy, expose, exposeHost string
-		if err := rows.Scan(&projectID, &imageTag, &strategy, &expose, &exposeHost); err != nil {
-			return "", err
+		var id, projectID, imageTag, strategy, expose, exposeHost string
+		if err := rows.Scan(&id, &projectID, &imageTag, &strategy, &expose, &exposeHost); err != nil {
+			return "", nil, err
 		}
 		if seen[projectID] { // keep only the latest active release per project
 			continue
@@ -39,17 +44,18 @@ func DesiredState(ctx context.Context, db *sql.DB, region string) (string, error
 		seen[projectID] = true
 		m, err := renderManifest(projectID, imageTag, strategy, expose, exposeHost)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		// Drop any Namespace resource: it's cluster-scoped, and the on-cluster
 		// reconciler runs with a namespace-scoped Role (no permission to manage
 		// namespaces — by design). The apps namespace is created at node join.
 		manifests = append(manifests, strings.TrimSpace(stripNamespaceDocs(m)))
+		releaseIDs = append(releaseIDs, id)
 	}
 	if err := rows.Err(); err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return strings.Join(manifests, "\n---\n"), nil
+	return strings.Join(manifests, "\n---\n"), releaseIDs, nil
 }
 
 // stripNamespaceDocs removes any `kind: Namespace` document from a multi-doc

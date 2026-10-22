@@ -221,6 +221,9 @@ func (s *Server) registerRoutes() {
 	s.router.Post("/fleet/redeem", s.handleFleetRedeem)
 	s.router.Post("/fleet/register", s.handleFleetRegister)
 	s.router.Get("/fleet/desired-state", s.handleFleetDesiredState)
+	// The on-cluster reconciler reports back which releases it applied, closing
+	// the pull-model feedback loop (ADR-0006 Phase 2). Cluster-token gated.
+	s.router.Post("/fleet/status", s.handleFleetStatus)
 
 	// Versioned API — protected by bearer token when BORDO_AUTH_TOKEN is set.
 	s.router.Route("/v1", func(r chi.Router) {
@@ -410,7 +413,12 @@ func (s *Server) handleFleetRegister(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired register token"})
 		return
 	}
-	if err := st.UpdateKubeconfig(r.Context(), req.Region, req.Kubeconfig, "healthy"); err != nil {
+	// Mark the region 'pending', not 'healthy': the node has joined but hasn't
+	// proven it's live yet. The first successful desired-state pull from its
+	// on-cluster reconciler flips it to 'healthy' (recordRegionPull); if pulls
+	// then stop, health derivation downgrades it to 'unreachable'. This is what
+	// keeps a dead region from reading healthy forever.
+	if err := st.UpdateKubeconfig(r.Context(), req.Region, req.Kubeconfig, "pending"); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -442,7 +450,10 @@ func (s *Server) handleFleetDesiredState(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid cluster token"})
 		return
 	}
-	manifests, err := release.DesiredState(r.Context(), s.db, region)
+	// A successful authenticated pull is the region's liveness signal; record it
+	// so health is derived from reality, not latched at join time.
+	s.recordRegionPull(r.Context(), region)
+	manifests, releaseIDs, err := release.DesiredState(r.Context(), s.db, region)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
@@ -457,7 +468,74 @@ func (s *Server) handleFleetDesiredState(w http.ResponseWriter, r *http.Request)
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"region": region, "manifests": manifests})
+	writeJSON(w, http.StatusOK, map[string]any{"region": region, "manifests": manifests, "release_ids": releaseIDs})
+}
+
+// handleFleetStatus receives the on-cluster reconciler's report of what it just
+// applied (ADR-0006 Phase 2 feedback loop). It is gated by the region's cluster
+// token, which also identifies the region. The report advances the named
+// releases: on success reconciling→deployed, on an apply error reconciling→failed
+// (with the error saved to the release log). The call also counts as a heartbeat.
+func (s *Server) handleFleetStatus(w http.ResponseWriter, r *http.Request) {
+	token := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+	if token == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "cluster token required"})
+		return
+	}
+	region, err := fleet.New(s.db).ValidateClusterToken(r.Context(), token)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid cluster token"})
+		return
+	}
+	var req struct {
+		AppliedReleaseIDs []string `json:"applied_release_ids"`
+		Error             string   `json:"error"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	// Reporting is also a liveness signal.
+	s.recordRegionPull(r.Context(), region)
+
+	now := time.Now().UTC()
+	for _, id := range req.AppliedReleaseIDs {
+		if req.Error == "" {
+			// Only advance releases still reconciling; never override a release
+			// that was rolled back or superseded in the meantime. Scope to the
+			// reporting region so a token can't touch another region's releases.
+			_, _ = s.db.ExecContext(r.Context(),
+				`UPDATE bordo_releases SET status = 'deployed', updated_at = ?
+				 WHERE id = ? AND region = ? AND status = 'reconciling'`,
+				now, id, region)
+		} else {
+			_, _ = s.db.ExecContext(r.Context(),
+				`UPDATE bordo_releases SET status = 'failed', log = ?, updated_at = ?
+				 WHERE id = ? AND region = ? AND status = 'reconciling'`,
+				req.Error, now, id, region)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "recorded", "region": region})
+}
+
+// recordRegionPull marks a region as live: it stamps last_pull_at, derives the
+// stored status to healthy, and refreshes a synthetic "reconciler" heartbeat so
+// region_health shows a live node. getHealth/overview downgrade a region whose
+// pulls go stale, so this never leaves a dead region reading healthy forever.
+func (s *Server) recordRegionPull(ctx context.Context, region string) {
+	now := time.Now().UTC()
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE regions SET status = 'healthy', last_pull_at = ?, updated_at = ? WHERE name = ?`,
+		now, now, region); err != nil {
+		s.logger.Warn("record region pull", "region", region, "err", err)
+		return
+	}
+	_, _ = s.db.ExecContext(ctx, `
+		INSERT INTO bordo_node_health (id, region_name, node_name, ready, last_heartbeat, updated_at)
+		VALUES (?, ?, 'reconciler', 1, ?, ?)
+		ON CONFLICT(region_name, node_name) DO UPDATE SET
+			ready = 1, last_heartbeat = excluded.last_heartbeat, updated_at = excluded.updated_at`,
+		region+":reconciler", region, now, now)
 }
 
 // firstGHCROwner returns the owner from the first ghcr.io/<owner>/... image
@@ -515,7 +593,7 @@ func (s *Server) handleFleetOverview(w http.ResponseWriter, r *http.Request) {
 		Deployments []deployment `json:"deployments"`
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `SELECT name, status FROM regions ORDER BY name`)
+	rows, err := s.db.QueryContext(r.Context(), `SELECT name, status, last_pull_at FROM regions ORDER BY name`)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -525,8 +603,17 @@ func (s *Server) handleFleetOverview(w http.ResponseWriter, r *http.Request) {
 	var regions []regionOverview
 	for rows.Next() {
 		var ro regionOverview
-		if err := rows.Scan(&ro.Name, &ro.Status); err != nil {
+		var lastPull sql.NullTime
+		if err := rows.Scan(&ro.Name, &ro.Status, &lastPull); err != nil {
 			continue
+		}
+		// Derive live status from the region's last reconciler pull.
+		if lastPull.Valid {
+			if time.Since(lastPull.Time) <= fleet.RegionStaleAfter {
+				ro.Status = "healthy"
+			} else {
+				ro.Status = "unreachable"
+			}
 		}
 		ro.Deployments = []deployment{}
 		regions = append(regions, ro)

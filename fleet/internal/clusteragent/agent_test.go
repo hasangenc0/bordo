@@ -38,7 +38,7 @@ func TestFetchDesiredStateSendsToken(t *testing.T) {
 	defer srv.Close()
 
 	a := New(Config{CPURL: srv.URL, ClusterToken: "ct", Interval: time.Second, Namespace: "bordo-apps"})
-	ds, err := a.fetchDesiredState(context.Background())
+	ds, _, err := a.fetchDesiredState(context.Background())
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestFetchDesiredStateRejected(t *testing.T) {
 	defer srv.Close()
 
 	a := New(Config{CPURL: srv.URL, ClusterToken: "bad", Interval: time.Second})
-	if _, err := a.fetchDesiredState(context.Background()); err == nil {
+	if _, _, err := a.fetchDesiredState(context.Background()); err == nil {
 		t.Fatal("expected error on 401")
 	}
 }
@@ -77,6 +77,69 @@ func TestReconcileOnceAppliesManifests(t *testing.T) {
 	}
 	if appliedNS != "bordo-apps" || appliedManifests != "APPLY-ME" {
 		t.Fatalf("applied ns=%q manifests=%q", appliedNS, appliedManifests)
+	}
+}
+
+func TestReconcileReportsAppliedReleases(t *testing.T) {
+	var reportBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/fleet/desired-state":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"manifests":   "APPLY-ME",
+				"release_ids": []string{"rel-1", "rel-2"},
+			})
+		case "/fleet/status":
+			_ = json.NewDecoder(r.Body).Decode(&reportBody)
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "recorded"})
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	a := New(Config{CPURL: srv.URL, ClusterToken: "ct", Interval: time.Second, Namespace: "bordo-apps"})
+	a.apply = func(ctx context.Context, ns, m string) error { return nil }
+	if err := a.ReconcileOnce(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if reportBody == nil {
+		t.Fatal("reconciler did not report applied releases")
+	}
+	ids, _ := reportBody["applied_release_ids"].([]any)
+	if len(ids) != 2 {
+		t.Fatalf("applied_release_ids = %v", reportBody["applied_release_ids"])
+	}
+	if errStr, _ := reportBody["error"].(string); errStr != "" {
+		t.Errorf("expected no error on successful apply, got %q", errStr)
+	}
+}
+
+func TestReconcileReportsApplyFailure(t *testing.T) {
+	var reportBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/fleet/desired-state":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"manifests":   "APPLY-ME",
+				"release_ids": []string{"rel-1"},
+			})
+		case "/fleet/status":
+			_ = json.NewDecoder(r.Body).Decode(&reportBody)
+		}
+	}))
+	defer srv.Close()
+
+	a := New(Config{CPURL: srv.URL, ClusterToken: "ct", Interval: time.Second, Namespace: "bordo-apps"})
+	a.apply = func(ctx context.Context, ns, m string) error { return context.DeadlineExceeded }
+	if err := a.ReconcileOnce(context.Background()); err == nil {
+		t.Fatal("expected apply error to propagate")
+	}
+	if reportBody == nil {
+		t.Fatal("reconciler did not report the failed apply")
+	}
+	if errStr, _ := reportBody["error"].(string); errStr == "" {
+		t.Error("expected the apply error to be reported")
 	}
 }
 

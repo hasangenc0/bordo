@@ -32,9 +32,13 @@ func TestDesiredState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ds, err := DesiredState(context.Background(), db, "us-east")
+	ds, ids, err := DesiredState(context.Background(), db, "us-east")
 	if err != nil {
 		t.Fatalf("desired state: %v", err)
+	}
+	// Two active projects (projA latest, projB) are included.
+	if len(ids) != 2 {
+		t.Errorf("expected 2 release IDs, got %d: %v", len(ids), ids)
 	}
 
 	// latest active release for each us-east project is included
@@ -65,12 +69,15 @@ func TestDesiredState(t *testing.T) {
 	}
 
 	// empty region yields empty desired state, not an error
-	empty, err := DesiredState(context.Background(), db, "nowhere")
+	empty, emptyIDs, err := DesiredState(context.Background(), db, "nowhere")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if empty != "" {
 		t.Errorf("expected empty desired state, got %q", empty)
+	}
+	if len(emptyIDs) != 0 {
+		t.Errorf("expected no release IDs for empty region, got %v", emptyIDs)
 	}
 }
 
