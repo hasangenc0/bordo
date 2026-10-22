@@ -7,7 +7,7 @@ description: Operate the Bordo self-hosted platform via the bordo CLI — instal
 
 Bordo is a self-hostable software factory. The `bordo` CLI is the single control
 surface for the whole stack; Docker is the runtime underneath. You never run raw
-`docker compose` commands — always drive the platform through `bordo platform`.
+`docker compose` commands; always drive the platform through `bordo platform`.
 
 ## Services
 
@@ -66,19 +66,19 @@ requires a **DeepSeek API key** (the agent's LLM). Steps:
 4. Deploy: `bordo deploy create <project-id> <image> --region <name> --expose nodeport`.
    The app becomes reachable at `http://<server-ip>:<nodeport>`.
 
-The agent can do all of this via tool calls — prefer driving builds with
+The agent can do all of this via tool calls; prefer driving builds with
 `build_trigger` (runs in GitHub Actions). NEVER advise installing Docker when a
 build fails; the real cause is GitHub not being connected (`bordo github login`).
 
 ## Safety rules
 
 - **Never** run `bordo platform down --volumes` unless the user explicitly asks to
-  delete all data — it destroys the control-plane database and chat history.
+  delete all data; it destroys the control-plane database and chat history.
 - Keep services private. Recommend an SSH tunnel
   (`ssh -L 3000:localhost:3000 -L 7401:localhost:7401 root@SERVER`) instead of
   exposing ports 3000/7401/7402 to the public internet.
 - To change ports or the token: edit `~/.bordo/deploy/.env`, then `bordo platform up`.
-- The `BORDO_INTERNAL_TOKEN` is a secret — never print it, commit it, or send it
+- The `BORDO_INTERNAL_TOKEN` is a secret; never print it, commit it, or send it
   to any external service.
 
 ## Troubleshooting

@@ -8,9 +8,9 @@ guide takes you from a fresh server to a running, configured Bordo.
 
 ## Prerequisites
 
-- **Docker 24+** with the Compose plugin — `docker compose version` should print `v2.x`.
+- **Docker 24+** with the Compose plugin: `docker compose version` should print `v2.x`.
   The CLI checks for Docker and links the install docs if it's missing; it does
-  **not** install Docker for you (that touches system packages).
+  not install Docker for you (that touches system packages).
 - The `bordo` binary (see [Install the CLI](#install-the-cli)).
 
 ---
@@ -66,21 +66,21 @@ bordo setup             # defaults to http://localhost:7401 — no flag needed o
 > `bordo setup --server http://localhost:7401` (with an SSH tunnel) or
 > `bordo setup --server http://<SERVER_IP>:7401`.
 
-Setup returns your **admin token** — save it, it is shown only once.
+Setup returns your **admin token**. Save it; it is shown only once.
 
 ---
 
 ## Connect GitHub
 
 Bordo builds your code in GitHub Actions, so it needs access to your GitHub
-account. This uses GitHub's device flow — nothing opens a browser on the server:
+account. This uses GitHub's device flow, so nothing opens a browser on the server:
 
 ```bash
 bordo github login
 ```
 
 It prints a short code and a link. Open the link in any browser (laptop or phone),
-enter the code, approve. Done — `✓ GitHub connected`.
+enter the code, and approve. You'll see `✓ GitHub connected`.
 
 > One-time prerequisite: register a public GitHub OAuth App (GitHub → Settings →
 > Developer settings → OAuth Apps → New), turn on **Enable Device Flow**, and set
@@ -90,7 +90,7 @@ enter the code, approve. Done — `✓ GitHub connected`.
 
 ## Create and deploy your first app
 
-**The easy way — ask the agent** (it drives everything via tool calls):
+**The easy way, ask the agent** (it drives everything via tool calls):
 
 ```bash
 bordo agent chat
@@ -101,7 +101,7 @@ bordo agent chat
 The agent scaffolds the project, builds the image in GitHub Actions, deploys it,
 and reports the URL. Keep chatting to inspect logs, redeploy, or roll back.
 
-**The explicit way — plain commands:**
+**The explicit way, plain commands:**
 
 ```bash
 bordo project create hello-api --template java-web-service
@@ -125,7 +125,7 @@ bordo deploy create <project-id> ghcr.io/<owner>/hello-api:<tag> \
 ## Add a server (region)
 
 A "region" is a machine that runs your apps. Register one and Bordo prints a
-single command to run on that machine — no SSH keys handed around:
+single command to run on that machine, with no SSH keys handed around:
 
 ```bash
 bordo region add my-server            # prints the one-line join command
@@ -150,7 +150,7 @@ than exposing ports publicly:
 ssh -L 3000:localhost:3000 -L 7401:localhost:7401 root@<SERVER_IP>
 ```
 
-Then open **http://localhost:3000** — the chat-first web console.
+Then open **http://localhost:3000**, the chat-first web console.
 
 Point the CLI at the same tunnel:
 
