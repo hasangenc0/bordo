@@ -13,7 +13,9 @@ printf 'bordo:%s\n' "$hash" > /etc/nginx/.htpasswd
 chmod 644 /etc/nginx/.htpasswd
 
 # Substitute only ${BORDO_AGENT_TOKEN}; leave nginx's own $variables untouched.
+# The official nginx image includes /etc/nginx/conf.d/*.conf.
+mkdir -p /etc/nginx/conf.d
 envsubst '${BORDO_AGENT_TOKEN}' \
   < /etc/nginx/templates/default.conf.template \
-  > /etc/nginx/http.d/default.conf
+  > /etc/nginx/conf.d/default.conf
 exec nginx -g 'daemon off;'
