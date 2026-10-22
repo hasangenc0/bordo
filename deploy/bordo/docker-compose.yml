@@ -43,6 +43,7 @@ services:
       - BORDO_AGENT_TOKEN=${BORDO_INTERNAL_TOKEN}
       # - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - BORDO_CHAT_DB=/data/agent-chats.db
+      - BORDO_WORKSPACE=/data/workspaces
     mem_limit: 512m
     memswap_limit: 512m
     volumes:

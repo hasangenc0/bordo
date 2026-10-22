@@ -16,7 +16,7 @@ type Region struct {
 	ID         string
 	Name       string
 	Status     string
-	Kubeconfig string
+	Kubeconfig string `json:"-"` // credential: never serialize to API clients
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 }

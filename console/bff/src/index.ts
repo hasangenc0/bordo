@@ -16,35 +16,25 @@ function agentHeaders(): Record<string, string> {
   return {}
 }
 
-async function proxyToAgent(req: Request, res: Response, agentPath: string, method = 'GET', body?: unknown) {
+// Mirrors the production nginx: /api/tools -> /mcp/tools, /api/* -> agent root.
+// The agent in turn proxies /v1/* to the control plane, so the console can reach
+// every control-plane endpoint through this one path.
+app.use('/api', async (req: Request, res: Response) => {
+  const path = req.url === '/tools' ? '/mcp/tools' : req.url
+  const hasBody = !['GET', 'HEAD', 'DELETE'].includes(req.method) && req.body !== undefined
   try {
-    const opts: RequestInit = { method, headers: agentHeaders() }
-    if (body !== undefined) {
-      ;(opts.headers as Record<string, string>)['Content-Type'] = 'application/json'
-      opts.body = JSON.stringify(body)
-    }
-    const r = await fetch(`${AGENT_BASE}${agentPath}`, opts)
-    const data = (await r.json()) as unknown
-    res.status(r.status).json(data)
-  } catch {
-    res.status(502).json({ error: 'agent unavailable' })
-  }
-}
-
-// Chat sessions
-app.get('/api/chats', (req, res) => proxyToAgent(req, res, '/chats'))
-app.post('/api/chats', (req, res) => proxyToAgent(req, res, '/chats', 'POST'))
-app.get('/api/chats/:id', (req, res) => proxyToAgent(req, res, `/chats/${req.params.id}`))
-app.delete('/api/chats/:id', (req, res) => proxyToAgent(req, res, `/chats/${req.params.id}`, 'DELETE'))
-app.put('/api/chats/:id/title', (req, res) =>
-  proxyToAgent(req, res, `/chats/${req.params.id}/title`, 'PUT', req.body),
-)
-
-app.get('/api/tools', async (_req, res) => {
-  try {
-    const r = await fetch(`${AGENT_BASE}/mcp/tools`, { headers: agentHeaders() })
-    const data = (await r.json()) as unknown
-    res.json(data)
+    const headers: Record<string, string> = { ...agentHeaders() }
+    if (hasBody) headers['Content-Type'] = 'application/json'
+    const r = await fetch(`${AGENT_BASE}${path}`, {
+      method: req.method,
+      headers,
+      body: hasBody ? JSON.stringify(req.body) : undefined,
+    })
+    const text = await r.text()
+    res.status(r.status)
+    const ct = r.headers.get('content-type')
+    if (ct) res.setHeader('Content-Type', ct)
+    res.send(text)
   } catch {
     res.status(502).json({ error: 'agent unavailable' })
   }
@@ -67,14 +57,15 @@ wss.on('connection', (clientWs, req) => {
 
   const agentWs = new WebSocket(agentWsURL)
 
-  agentWs.on('message', (data) => {
-    if (clientWs.readyState === clientWs.OPEN) clientWs.send(data as Buffer)
+  // Preserve the frame type: the browser expects the agent's text frames as text.
+  agentWs.on('message', (data, isBinary) => {
+    if (clientWs.readyState === clientWs.OPEN) clientWs.send(data, { binary: isBinary })
   })
   agentWs.on('close', () => clientWs.close())
   agentWs.on('error', () => clientWs.close())
 
-  clientWs.on('message', (data) => {
-    if (agentWs.readyState === agentWs.OPEN) agentWs.send(data as Buffer)
+  clientWs.on('message', (data, isBinary) => {
+    if (agentWs.readyState === agentWs.OPEN) agentWs.send(data, { binary: isBinary })
   })
   clientWs.on('close', () => agentWs.close())
   clientWs.on('error', () => agentWs.close())

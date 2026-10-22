@@ -1,15 +1,17 @@
-import { useState } from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { useCallback, useEffect, useState } from 'react'
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import type { ActionEvent, WSIncoming } from './types'
-import { Sidebar } from './components/Sidebar'
-import { ChatPane } from './components/ChatPane'
 import { ActivityPanel } from './components/ActivityPanel'
-import { ServicesPage } from './pages/ServicesPage'
-import { ServiceDetailPage } from './pages/ServiceDetailPage'
-import { TemplateGalleryPage } from './pages/TemplateGalleryPage'
+import { ChatPane } from './components/ChatPane'
+import { Sidebar } from './components/Sidebar'
 import { useAuth } from './hooks/useAuth'
-import { useWebSocket } from './hooks/useWebSocket'
 import { useChats } from './hooks/useChats'
+import { useWebSocket } from './hooks/useWebSocket'
+import { AppDetailPage } from './pages/AppDetailPage'
+import { AppsPage } from './pages/AppsPage'
+import { ChatPage } from './pages/ChatPage'
+import { ObservePage } from './pages/ObservePage'
+import { RegionsPage } from './pages/RegionsPage'
 import './styles.css'
 
 const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -17,51 +19,62 @@ const AGENT_WS_URL =
   (import.meta.env.VITE_AGENT_WS_URL as string | undefined) ??
   `${wsProto}//${window.location.host}/ws/chat`
 
+const ACTIVE_CHAT_KEY = 'bordo_active_chat'
+const DOCK_KEY = 'bordo_dock_open'
+
+function readStore(key: string): string | null {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+function writeStore(key: string, value: string | null) {
+  try {
+    if (value === null) localStorage.removeItem(key)
+    else localStorage.setItem(key, value)
+  } catch {
+    // storage unavailable (private mode); the setting just won't persist
+  }
+}
+
 function SettingsPanel({ token, onSave }: { token: string; onSave: (t: string) => void }) {
   const [draft, setDraft] = useState(token)
   return (
     <div className="settings-panel">
       <h2>Settings</h2>
       <label className="settings-label">
-        Bearer Token
+        Bearer token
         <input
           type="password"
           className="settings-input"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder="Enter your Bordo API token"
+          placeholder="Only needed when the console is not behind the Bordo proxy"
         />
       </label>
-      <button className="settings-save" onClick={() => onSave(draft)}>
-        Save
-      </button>
+      <button className="settings-save" onClick={() => onSave(draft)}>Save</button>
       <p className="settings-hint">
-        Token is stored in localStorage. Generate one with <code>bordo token create</code>.
+        Stored in this browser only. Generate one with <code>bordo platform token</code>.
       </p>
     </div>
   )
 }
 
-function PlaceholderPage({ title }: { title: string }) {
-  return (
-    <div className="page-container">
-      <h1 className="page-title">{title}</h1>
-      <p style={{ color: 'var(--text-muted)', marginTop: '16px', fontSize: '13px' }}>
-        This section is coming soon.
-      </p>
-    </div>
-  )
-}
-
-export default function App() {
+function Shell() {
   const { token, saveToken } = useAuth()
-  const [activeChatId, setActiveChatId] = useState<string | null>(null)
+  const location = useLocation()
+  const [activeChatId, setActiveChatId] = useState<string | null>(() => readStore(ACTIVE_CHAT_KEY))
+  const [dockOpen, setDockOpen] = useState(() => readStore(DOCK_KEY) !== 'false')
   const [showActivity, setShowActivity] = useState(false)
   const [actionEvents, setActionEvents] = useState<ActionEvent[]>([])
-  const { chats, createChat, updateChatTitle } = useChats()
+  const [pending, setPending] = useState<{ chatId: string; text: string } | null>(null)
+  const { chats, createChat, deleteChat, refetch } = useChats()
 
+  const onHome = location.pathname === '/'
   const activeChat = chats.find((c) => c.id === activeChatId)
-  const { messages, send, connected } = useWebSocket(AGENT_WS_URL, token, activeChatId, (msg: WSIncoming) => {
+
+  const { messages, send, connected, busy } = useWebSocket(AGENT_WS_URL, token, activeChatId, (msg: WSIncoming) => {
     if (msg.type === 'action' && msg.action_id) {
       const ev: ActionEvent = {
         id: msg.action_id,
@@ -72,141 +85,180 @@ export default function App() {
         log_url: msg.action_log_url,
       }
       setActionEvents((prev) => {
-        const existing = prev.findIndex((e) => e.id === ev.id)
-        if (existing >= 0) {
-          const updated = [...prev]
-          updated[existing] = ev
-          return updated
-        }
-        return [ev, ...prev]
+        const i = prev.findIndex((e) => e.id === ev.id)
+        if (i < 0) return [ev, ...prev]
+        const next = [...prev]
+        next[i] = ev
+        return next
       })
-      setShowActivity(true)
+    } else if (msg.type === 'done') {
+      void refetch() // the server titles a chat from its first message
     }
   })
 
-  const handleNewChat = async () => {
-    const session = await createChat()
-    if (session) {
-      setActiveChatId(session.id)
-    }
-  }
-
-  const handleChatSelect = (id: string) => {
+  const selectChat = useCallback((id: string | null) => {
     setActiveChatId(id)
-  }
+    writeStore(ACTIVE_CHAT_KEY, id)
+  }, [])
 
-  const handleSendMessage = (msg: string) => {
-    if (!activeChatId) {
-      createChat().then((session) => {
-        if (session) {
-          setActiveChatId(session.id)
-          // Send after connection is established — the WS hook will handle it
-          setTimeout(() => send(msg), 500)
-          if (session.title === 'New Chat') {
-            updateChatTitle(session.id, msg.slice(0, 40))
-          }
-        }
-      })
-    } else {
-      send(msg)
+  // A remembered chat that no longer exists (deleted elsewhere) falls back to the empty state.
+  useEffect(() => {
+    if (activeChatId && chats.length > 0 && !chats.some((c) => c.id === activeChatId) && pending?.chatId !== activeChatId) {
+      selectChat(null)
     }
+  }, [chats, activeChatId, pending, selectChat])
+
+  // Deliver a message that created its own chat once that chat's socket is up.
+  useEffect(() => {
+    if (pending && connected && pending.chatId === activeChatId) {
+      send(pending.text)
+      setPending(null)
+    }
+  }, [pending, connected, activeChatId, send])
+
+  const handleSend = useCallback(
+    async (text: string) => {
+      if (activeChatId) {
+        send(text)
+        return
+      }
+      const session = await createChat()
+      if (!session) return
+      setPending({ chatId: session.id, text })
+      selectChat(session.id)
+    },
+    [activeChatId, send, createChat, selectChat],
+  )
+
+  // Pages use this to hand the agent a task ("change the code", ...); it also reveals the dock.
+  const askAgent = useCallback(
+    (text: string) => {
+      setDockOpen(true)
+      writeStore(DOCK_KEY, 'true')
+      void handleSend(text)
+    },
+    [handleSend],
+  )
+
+  const newChat = async () => {
+    const session = await createChat()
+    if (session) selectChat(session.id)
   }
 
-  const approveAction = async (id: string) => {
-    await fetch(`/api/approvals/${id}/approve`, { method: 'POST' }).catch(() => {})
-    setActionEvents((prev) =>
-      prev.map((e) => e.id === id ? { ...e, status: 'approved' } : e),
-    )
+  const removeChat = async (id: string) => {
+    await deleteChat(id)
+    if (id === activeChatId) selectChat(null)
   }
 
-  const rejectAction = async (id: string) => {
-    await fetch(`/api/approvals/${id}/reject`, { method: 'POST' }).catch(() => {})
-    setActionEvents((prev) =>
-      prev.map((e) => e.id === id ? { ...e, status: 'failed' } : e),
-    )
+  const toggleDock = () => {
+    setDockOpen((o) => {
+      writeStore(DOCK_KEY, String(!o))
+      return !o
+    })
   }
+
+  const decide = async (id: string, verdict: 'approve' | 'reject') => {
+    try {
+      await fetch(`/api/approvals/${id}/${verdict}`, { method: 'POST' })
+    } catch {
+      // surfaced by the status staying unchanged
+    }
+    setActionEvents((prev) => prev.map((e) => (e.id === id ? { ...e, status: verdict === 'approve' ? 'approved' : 'failed' } : e)))
+  }
+
+  const showDock = !onHome && dockOpen
 
   return (
-    <BrowserRouter>
-      <div className="app-layout">
-        <Sidebar />
-        <main className="app-main">
-          <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-            <div className="app-content" style={{ flex: 1, overflow: 'auto' }}>
-              <Routes>
-                <Route path="/" element={<Navigate to="/services" replace />} />
-                <Route
-                  path="/services"
-                  element={<ServicesPage onSendMessage={handleSendMessage} />}
-                />
-                <Route
-                  path="/services/:name/*"
-                  element={<ServiceDetailPage onSendMessage={handleSendMessage} />}
-                />
-                <Route
-                  path="/templates"
-                  element={<TemplateGalleryPage onSendMessage={handleSendMessage} />}
-                />
-                <Route path="/build" element={<PlaceholderPage title="Build" />} />
-                <Route path="/release" element={<PlaceholderPage title="Release" />} />
-                <Route path="/observe" element={<PlaceholderPage title="Observe" />} />
-                <Route
-                  path="/settings"
-                  element={
-                    <div className="app-content">
-                      <SettingsPanel token={token} onSave={saveToken} />
-                    </div>
-                  }
-                />
-              </Routes>
-            </div>
+    <div className="app-layout">
+      <Sidebar />
+      <main className="app-main">
+        <div className="app-body">
+          <div className="app-content">
+            <Routes>
+              <Route
+                path="/"
+                element={
+                  <ChatPage
+                    chats={chats}
+                    activeChatId={activeChatId}
+                    onSelect={selectChat}
+                    onNew={() => void newChat()}
+                    onDelete={(id) => void removeChat(id)}
+                    messages={messages}
+                    onSend={(t) => void handleSend(t)}
+                    connected={connected}
+                    busy={busy}
+                    title={activeChat?.title}
+                  />
+                }
+              />
+              <Route path="/apps" element={<AppsPage />} />
+              <Route path="/apps/:name/*" element={<AppDetailPage onAsk={askAgent} />} />
+              <Route path="/regions" element={<RegionsPage />} />
+              <Route path="/observe" element={<ObservePage />} />
+              <Route path="/settings" element={<div className="app-content"><SettingsPanel token={token} onSave={saveToken} /></div>} />
+              {/* old routes */}
+              <Route path="/services/*" element={<Navigate to="/apps" replace />} />
+              <Route path="/templates" element={<Navigate to="/apps" replace />} />
+              <Route path="/build" element={<Navigate to="/apps" replace />} />
+              <Route path="/release" element={<Navigate to="/apps" replace />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </div>
 
-            {/* Chat pane */}
-            <div style={{ width: '360px', borderLeft: '1px solid var(--border)', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-              <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border)', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                <span style={{ fontSize: '12px', fontWeight: 500, flex: 1 }}>Agent Chat</span>
-                <button className="btn btn-secondary btn-sm" onClick={handleNewChat}>+ New Chat</button>
-                {chats.slice(0, 3).map((c) => (
-                  <button
-                    key={c.id}
-                    className={`btn btn-sm ${activeChatId === c.id ? 'btn-primary' : 'btn-secondary'}`}
-                    onClick={() => handleChatSelect(c.id)}
-                    style={{ maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                    title={c.title}
-                  >
-                    {c.title.slice(0, 12)}
-                  </button>
-                ))}
-                <button
-                  className="activity-toggle"
-                  style={{ position: 'static', marginLeft: 'auto' }}
-                  onClick={() => setShowActivity((v) => !v)}
+          {!onHome && !dockOpen && (
+            <button className="dock-fab" onClick={toggleDock}>✦ Ask Bordo</button>
+          )}
+
+          {showDock && (
+            <div className="dock">
+              <div className="dock-head">
+                <span className="dock-title">✦ Bordo</span>
+                <select
+                  className="select dock-select"
+                  value={activeChatId ?? ''}
+                  onChange={(e) => selectChat(e.target.value || null)}
+                  aria-label="Conversation"
                 >
-                  Activity {actionEvents.filter((e) => e.status === 'pending').length > 0 && (
-                    <span style={{ color: 'var(--status-warning)' }}>●</span>
-                  )}
+                  <option value="">New conversation</option>
+                  {chats.map((c) => <option key={c.id} value={c.id}>{c.title || 'New chat'}</option>)}
+                </select>
+                <button className="btn btn-secondary btn-sm" onClick={() => selectChat(null)} title="Start a new conversation">New</button>
+                <button className="btn btn-secondary btn-sm" onClick={() => setShowActivity((v) => !v)}>
+                  Activity{actionEvents.some((e) => e.status === 'pending') && <span style={{ color: 'var(--status-warning)' }}> ●</span>}
                 </button>
+                <button className="btn btn-secondary btn-sm" onClick={toggleDock} aria-label="Hide chat">✕</button>
               </div>
               <ChatPane
+                variant="dock"
                 messages={messages}
-                onSend={send}
+                onSend={(t) => void handleSend(t)}
                 connected={connected}
+                busy={busy}
                 chatId={activeChatId}
                 title={activeChat?.title}
               />
             </div>
+          )}
 
-            {showActivity && (
-              <ActivityPanel
-                events={actionEvents}
-                onApprove={approveAction}
-                onReject={rejectAction}
-                onClose={() => setShowActivity(false)}
-              />
-            )}
-          </div>
-        </main>
-      </div>
+          {showActivity && (
+            <ActivityPanel
+              events={actionEvents}
+              onApprove={(id) => void decide(id, 'approve')}
+              onReject={(id) => void decide(id, 'reject')}
+              onClose={() => setShowActivity(false)}
+            />
+          )}
+        </div>
+      </main>
+    </div>
+  )
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Shell />
     </BrowserRouter>
   )
 }

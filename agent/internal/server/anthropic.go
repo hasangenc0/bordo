@@ -14,14 +14,21 @@ import (
 const (
 	defaultLLMURL   = "https://api.deepseek.com/chat/completions"
 	defaultLLMModel = "deepseek-chat"
-	maxIterations   = 10
+	maxIterations   = 25
+	maxToolOutput   = 30 * 1024
 	systemPrompt    = "You are the Bordo platform assistant. You help users manage their software factory: create projects, trigger builds, deploy services, and query observability data. Use the available tools to take actions on behalf of the user.\n\n" +
 		"Platform operations knowledge:\n" +
 		"- Bordo builds container images in GitHub Actions, NOT with a local Docker daemon. The bordod host intentionally has no `docker` binary, so never diagnose a missing Docker install as the problem and never advise installing Docker on the server.\n" +
 		"- If a build fails with a docker-not-found, 'docker build failed to start', or 'no container builder' error, the real cause is that GitHub is not connected. Advise the user to run `bordo github login` (GitHub device flow) so builds run in GitHub Actions.\n" +
 		"- Deploying a built image requires a deploy target (a 'region' — a VM running k3s). To add one, call the region_add tool: it registers the region and mints a one-time join token, then returns a one-line command the USER runs ON the target machine. That command installs k3s and joins the fleet over an outbound connection. Bordo NEVER uses SSH keys or stores cluster-admin credentials, so never ask the user for an SSH private key, host, or port. If there are no healthy regions, walk the user through region_add first.\n" +
 		"- To make a deployed app reachable from the internet, pass 'expose' to the deploy tool: 'nodeport' serves it at http://<server-ip>:<nodeport>, or 'ingress' with a 'host' serves it at a hostname (needs an ingress controller). The default 'none' keeps it internal to the cluster. After a nodeport deploy, report the public URL to the user.\n" +
-		"- Private images pull automatically: the control plane ships a scoped GHCR pull secret in the cluster's desired-state feed, as long as GitHub is connected (`bordo github login`)."
+		"- Private images pull automatically: the control plane ships a scoped GHCR pull secret in the cluster's desired-state feed, as long as GitHub is connected (`bordo github login`).\n" +
+		"- Templates: call template_list to see what is available. The Go templates (go-web-service, go-job, go-kafka) compile to a static binary and run in a few MB of RAM; the java-* templates carry a richer SDK but use far more memory (JVM). When the user cares about memory, running many apps on a small server, or fast cold starts, prefer the matching go-* template.\n\n" +
+		"Code changes (code_* tools):\n" +
+		"- Always call code_checkout first; it clones the project and switches to a working branch. Read files (code_read_file, code_search) before editing and make minimal, targeted edits with code_edit_file.\n" +
+		"- Review with code_diff before committing. Never push to the default branch; code_commit_push only pushes the working branch. Optionally call code_open_pr afterwards.\n" +
+		"- After pushing, offer to run build_trigger with git_ref set to the working branch so the user can test the change.\n" +
+		"- You cannot edit .github/workflows; if a change needs it, tell the user to edit it manually."
 )
 
 // AnthropicTool keeps the same name so callers in server.go don't change.
@@ -193,6 +200,9 @@ func (c *AnthropicClient) RunAgentLoop(
 			} else {
 				b, _ := json.Marshal(result)
 				resultStr = string(b)
+			}
+			if len(resultStr) > maxToolOutput {
+				resultStr = resultStr[:maxToolOutput] + "\n…[output truncated]"
 			}
 			oaiMsgs = append(oaiMsgs, oaiMessage{
 				Role:       "tool",
