@@ -52,6 +52,23 @@ requires a **DeepSeek API key** (the agent's LLM). Steps:
 | `bordo platform token` | Print the one-time setup token (needed for `bordo setup`). |
 | `bordo platform logs [-f] [service]` | Show/stream logs, optionally for one service. |
 | `bordo platform upgrade` | Pull latest images + restart; **data preserved**. |
+| `bordo github login` | Connect GitHub via device flow (required before builds). |
+| `bordo region add <name>` | Register a deploy target; prints a one-line node-join command to run on the machine. |
+| `bordo project create <name> --template <t>` | Scaffold a new project. |
+| `bordo build trigger <app>` | Build the project's image in GitHub Actions → GHCR. |
+| `bordo deploy create <project-id> <image> --region <r> [--expose nodeport\|ingress --host <h>]` | Deploy a release; `--expose` makes it publicly reachable. |
+
+## Deploy flow (end to end)
+
+1. `bordo github login` — connect GitHub (once).
+2. Create + build: `bordo project create …` then `bordo build trigger …` (runs in GitHub Actions).
+3. Have a target: `bordo region add <name>`, run the printed command on the machine.
+4. Deploy: `bordo deploy create <project-id> <image> --region <name> --expose nodeport`.
+   The app becomes reachable at `http://<server-ip>:<nodeport>`.
+
+The agent can do all of this via tool calls — prefer driving builds with
+`build_trigger` (runs in GitHub Actions). NEVER advise installing Docker when a
+build fails; the real cause is GitHub not being connected (`bordo github login`).
 
 ## Safety rules
 
@@ -75,9 +92,13 @@ requires a **DeepSeek API key** (the agent's LLM). Steps:
   internal token, not the admin token. `bordo platform install` sets this
   automatically; otherwise run `bordo config set agent_token <BORDO_INTERNAL_TOKEN>`
   (the value is in the deploy `.env`). The console UI always works without this.
-- **Deploying an app fails** → the control plane is up, but running user workloads
-  needs a k3s cluster bootstrapped onto a VM first (fleet layer). That is a
-  separate step from `bordo platform`.
+- **Deploying an app fails with no target** → register one first: `bordo region add
+  <name>`, then run the printed command on the machine so it joins the fleet.
+- **App pod ImagePullBackOff on a private image** → the control plane ships a GHCR
+  pull secret in the desired-state feed; ensure GitHub is connected
+  (`bordo github login`) so the token is available.
+- **App returns 404 on `/`** → the app simply has no route there; the
+  `java-web-service` template serves `GET /api/v1/hello`, not `/`.
 
 ## Mental model
 

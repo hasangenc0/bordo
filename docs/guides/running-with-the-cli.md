@@ -17,25 +17,15 @@ guide takes you from a fresh server to a running, configured Bordo.
 
 ## Install the CLI
 
-```bash
-go install github.com/hasangenc0/bordo/cli/bordo@latest
-```
-
-This installs a binary named `bordo` into `$(go env GOPATH)/bin`. Make sure that
-directory is on your `PATH`:
+One line, no Go toolchain needed (downloads a prebuilt binary):
 
 ```bash
-export PATH="$(go env GOPATH)/bin:$PATH"
+curl -fsSL https://raw.githubusercontent.com/hasangenc0/bordo/master/install-cli.sh | sh
 bordo version
 ```
 
-Building from source instead:
-
-```bash
-git clone https://github.com/hasangenc0/bordo.git
-cd bordo
-make build            # produces ./bin/bordo
-```
+Alternatives: `go install github.com/hasangenc0/bordo/cli/bordo@latest` (needs Go),
+or build from source with `make build` (produces `./bin/bordo`).
 
 ---
 
@@ -77,6 +67,77 @@ bordo setup             # defaults to http://localhost:7401 — no flag needed o
 > `bordo setup --server http://<SERVER_IP>:7401`.
 
 Setup returns your **admin token** — save it, it is shown only once.
+
+---
+
+## Connect GitHub
+
+Bordo builds your code in GitHub Actions, so it needs access to your GitHub
+account. This uses GitHub's device flow — nothing opens a browser on the server:
+
+```bash
+bordo github login
+```
+
+It prints a short code and a link. Open the link in any browser (laptop or phone),
+enter the code, approve. Done — `✓ GitHub connected`.
+
+> One-time prerequisite: register a public GitHub OAuth App (GitHub → Settings →
+> Developer settings → OAuth Apps → New), turn on **Enable Device Flow**, and set
+> `export BORDO_GITHUB_CLIENT_ID=<its client id>` before running `bordo github login`.
+
+---
+
+## Create and deploy your first app
+
+**The easy way — ask the agent** (it drives everything via tool calls):
+
+```bash
+bordo agent chat
+› create a java web service called hello-api and build it
+› deploy hello-api to <region> and expose it to the internet
+```
+
+The agent scaffolds the project, builds the image in GitHub Actions, deploys it,
+and reports the URL. Keep chatting to inspect logs, redeploy, or roll back.
+
+**The explicit way — plain commands:**
+
+```bash
+bordo project create hello-api --template java-web-service
+bordo build trigger hello-api                       # builds in GitHub Actions → image in GHCR
+bordo build status <build-id>                       # wait for "success"
+
+bordo deploy create <project-id> ghcr.io/<owner>/hello-api:<tag> \
+  --region <region> --expose nodeport
+```
+
+`--expose` controls public reach:
+
+| Value | Effect |
+|---|---|
+| `none` (default) | Internal only (inside the cluster) |
+| `nodeport` | Reachable at `http://<server-ip>:<nodeport>` |
+| `ingress --host app.example.com` | HTTP(S) at a hostname (needs an ingress controller) |
+
+---
+
+## Add a server (region)
+
+A "region" is a machine that runs your apps. Register one and Bordo prints a
+single command to run on that machine — no SSH keys handed around:
+
+```bash
+bordo region add my-server            # prints the one-line join command
+```
+
+On the target machine, run that printed command. It installs lightweight
+Kubernetes (k3s), joins the fleet with a one-time token, and starts pulling its
+own config. After that, `--region my-server` on any deploy ships there.
+
+> The join is outbound-only and least-privilege: the control plane never stores
+> an SSH key or cluster-admin credentials. See
+> [`../architecture/ADR-0006-hardened-deployment.md`](../architecture/ADR-0006-hardened-deployment.md).
 
 ---
 
