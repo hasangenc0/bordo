@@ -48,11 +48,13 @@ func NewHandler(db *sql.DB) http.Handler {
 }
 
 type createRequest struct {
-	ProjectID string   `json:"project_id"`
-	ImageTag  string   `json:"image_tag"`
-	Region    string   `json:"region"`
-	Regions   []string `json:"regions"`
-	Strategy  string   `json:"strategy"`
+	ProjectID  string   `json:"project_id"`
+	ImageTag   string   `json:"image_tag"`
+	Region     string   `json:"region"`
+	Regions    []string `json:"regions"`
+	Strategy   string   `json:"strategy"`
+	Expose     string   `json:"expose"`      // none | nodeport | ingress
+	ExposeHost string   `json:"expose_host"` // hostname for ingress
 }
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
@@ -99,6 +101,9 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	if req.Strategy == "" {
 		req.Strategy = "rolling"
 	}
+	if req.Expose == "" {
+		req.Expose = "none"
+	}
 
 	// Collect target regions.
 	regions := req.Regions
@@ -126,11 +131,11 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 			CreatedAt:      now,
 			UpdatedAt:      now,
 		}
-		const q = `INSERT INTO bordo_releases (id, project_id, image_tag, region, strategy, status, release_group_id, created_at, updated_at)
-		           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		const q = `INSERT INTO bordo_releases (id, project_id, image_tag, region, strategy, status, release_group_id, expose, expose_host, created_at, updated_at)
+		           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		if _, err := h.db.ExecContext(r.Context(), q,
 			rel.ID, rel.ProjectID, rel.ImageTag, rel.Region, rel.Strategy, rel.Status,
-			rel.ReleaseGroupID,
+			rel.ReleaseGroupID, req.Expose, req.ExposeHost,
 			rel.CreatedAt.Format(time.RFC3339), rel.UpdatedAt.Format(time.RFC3339),
 		); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

@@ -20,7 +20,7 @@ func DeployCmd() *cobra.Command {
 }
 
 func deployCreateCmd() *cobra.Command {
-	var region, strategy string
+	var region, strategy, expose, host string
 
 	cmd := &cobra.Command{
 		Use:   "create <project-id> <image-tag>",
@@ -31,17 +31,33 @@ func deployCreateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			switch expose {
+			case "", "none", "nodeport", "ingress":
+			default:
+				return fmt.Errorf("invalid --expose %q (valid: none, nodeport, ingress)", expose)
+			}
+			if expose == "ingress" && host == "" {
+				return fmt.Errorf("--expose ingress requires --host <hostname>")
+			}
 			c := client.New(cfg.Server, cfg.Token)
-			rel, err := c.CreateRelease(cmd.Context(), args[0], args[1], region, strategy)
+			rel, err := c.CreateRelease(cmd.Context(), args[0], args[1], region, strategy, expose, host)
 			if err != nil {
 				return err
 			}
 			fmt.Printf("release %s created (status: %s)\n", rel.ID, rel.Status)
+			if expose == "nodeport" {
+				fmt.Println("exposed via NodePort — once deployed, find the port with:")
+				fmt.Println("  kubectl -n bordo-apps get svc")
+			} else if expose == "ingress" {
+				fmt.Printf("exposed via Ingress at host %q (needs an ingress controller in the cluster)\n", host)
+			}
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&region, "region", "default", "Target region name")
 	cmd.Flags().StringVar(&strategy, "strategy", "rolling", "Rollout strategy: rolling, canary, blue-green")
+	cmd.Flags().StringVar(&expose, "expose", "none", "Expose the app: none | nodeport | ingress")
+	cmd.Flags().StringVar(&host, "host", "", "Ingress hostname (required for --expose ingress)")
 	return cmd
 }
 

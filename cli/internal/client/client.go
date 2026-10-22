@@ -216,12 +216,14 @@ type Release struct {
 }
 
 // CreateRelease calls POST /v1/releases.
-func (c *Client) CreateRelease(ctx context.Context, projectID, imageTag, region, strategy string) (*Release, error) {
+func (c *Client) CreateRelease(ctx context.Context, projectID, imageTag, region, strategy, expose, exposeHost string) (*Release, error) {
 	body := map[string]string{
-		"project_id": projectID,
-		"image_tag":  imageTag,
-		"region":     region,
-		"strategy":   strategy,
+		"project_id":  projectID,
+		"image_tag":   imageTag,
+		"region":      region,
+		"strategy":    strategy,
+		"expose":      expose,
+		"expose_host": exposeHost,
 	}
 	var rel Release
 	if err := c.post(ctx, "/v1/releases", body, &rel); err != nil {

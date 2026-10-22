@@ -45,7 +45,7 @@ func (c *Controller) Start(ctx context.Context) error {
 
 func (c *Controller) reconcile(ctx context.Context) {
 	rows, err := c.db.QueryContext(ctx,
-		`SELECT id, project_id, image_tag, region, strategy FROM bordo_releases WHERE status = 'reconciling'`)
+		`SELECT id, project_id, image_tag, region, strategy, expose, expose_host FROM bordo_releases WHERE status = 'reconciling'`)
 	if err != nil {
 		c.logger.Warn("release controller: query failed", "err", err)
 		return
@@ -53,12 +53,12 @@ func (c *Controller) reconcile(ctx context.Context) {
 	defer rows.Close()
 
 	type pending struct {
-		id, projectID, imageTag, region, strategy string
+		id, projectID, imageTag, region, strategy, expose, exposeHost string
 	}
 	var releases []pending
 	for rows.Next() {
 		var r pending
-		if err := rows.Scan(&r.id, &r.projectID, &r.imageTag, &r.region, &r.strategy); err == nil {
+		if err := rows.Scan(&r.id, &r.projectID, &r.imageTag, &r.region, &r.strategy, &r.expose, &r.exposeHost); err == nil {
 			releases = append(releases, r)
 		}
 	}
@@ -70,7 +70,7 @@ func (c *Controller) reconcile(ctx context.Context) {
 		if c.regionIsPullManaged(ctx, r.region) {
 			continue
 		}
-		if err := c.apply(ctx, r.id, r.projectID, r.imageTag, r.region, r.strategy); err != nil {
+		if err := c.apply(ctx, r.id, r.projectID, r.imageTag, r.region, r.strategy, r.expose, r.exposeHost); err != nil {
 			c.logger.Error("release controller: apply failed", "id", r.id, "err", err)
 			c.setStatus(ctx, r.id, "failed")
 		} else {
@@ -91,7 +91,7 @@ func (c *Controller) regionIsPullManaged(ctx context.Context, region string) boo
 	return err == nil && n > 0
 }
 
-func (c *Controller) apply(ctx context.Context, id, projectID, imageTag, regionName, strategy string) error {
+func (c *Controller) apply(ctx context.Context, id, projectID, imageTag, regionName, strategy, expose, exposeHost string) error {
 	var kubeconfig string
 	err := c.db.QueryRowContext(ctx,
 		`SELECT kubeconfig FROM regions WHERE name = ?`, regionName).Scan(&kubeconfig)
@@ -127,7 +127,7 @@ func (c *Controller) apply(ctx context.Context, id, projectID, imageTag, regionN
 		}
 	}
 
-	manifest, err := renderManifest(projectID, imageTag, strategy)
+	manifest, err := renderManifest(projectID, imageTag, strategy, expose, exposeHost)
 	if err != nil {
 		return fmt.Errorf("render manifest: %w", err)
 	}
@@ -266,7 +266,27 @@ spec:
   ports:
     - port: 80
       targetPort: {{.Port}}
-  type: ClusterIP
+  type: {{.ServiceType}}
+{{- if .Ingress}}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{.AppLabel}}
+  namespace: bordo-apps
+spec:
+  rules:
+    - host: {{.Host}}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{.AppLabel}}
+                port:
+                  number: 80
+{{- end}}
 `))
 
 type manifestVars struct {
@@ -276,9 +296,12 @@ type manifestVars struct {
 	Replicas           int
 	Port               int
 	UseImagePullSecret bool
+	ServiceType        string // ClusterIP | NodePort
+	Ingress            bool   // render an Ingress
+	Host               string // ingress host
 }
 
-func renderManifest(projectID, imageTag, strategy string) (string, error) {
+func renderManifest(projectID, imageTag, strategy, expose, host string) (string, error) {
 	replicas := 1
 	if strategy == "canary" || strategy == "blue-green" {
 		replicas = 2
@@ -290,6 +313,11 @@ func renderManifest(projectID, imageTag, strategy string) (string, error) {
 		port = 3000
 	}
 
+	serviceType := "ClusterIP"
+	if expose == "nodeport" {
+		serviceType = "NodePort"
+	}
+
 	vars := manifestVars{
 		AppLabel:           appLabel(projectID),
 		ProjectID:          projectID,
@@ -297,6 +325,9 @@ func renderManifest(projectID, imageTag, strategy string) (string, error) {
 		Replicas:           replicas,
 		Port:               port,
 		UseImagePullSecret: strings.HasPrefix(imageTag, "ghcr.io/"),
+		ServiceType:        serviceType,
+		Ingress:            expose == "ingress" && host != "",
+		Host:               host,
 	}
 
 	var buf bytes.Buffer

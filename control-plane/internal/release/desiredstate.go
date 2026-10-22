@@ -15,7 +15,7 @@ import (
 // several, the most recently updated one wins.
 func DesiredState(ctx context.Context, db *sql.DB, region string) (string, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT project_id, image_tag, strategy
+		`SELECT project_id, image_tag, strategy, expose, expose_host
 		 FROM bordo_releases
 		 WHERE region = ? AND status IN ('reconciling','deployed')
 		 ORDER BY project_id, updated_at DESC`, region)
@@ -29,15 +29,15 @@ func DesiredState(ctx context.Context, db *sql.DB, region string) (string, error
 		seen      = map[string]bool{}
 	)
 	for rows.Next() {
-		var projectID, imageTag, strategy string
-		if err := rows.Scan(&projectID, &imageTag, &strategy); err != nil {
+		var projectID, imageTag, strategy, expose, exposeHost string
+		if err := rows.Scan(&projectID, &imageTag, &strategy, &expose, &exposeHost); err != nil {
 			return "", err
 		}
 		if seen[projectID] { // keep only the latest active release per project
 			continue
 		}
 		seen[projectID] = true
-		m, err := renderManifest(projectID, imageTag, strategy)
+		m, err := renderManifest(projectID, imageTag, strategy, expose, exposeHost)
 		if err != nil {
 			return "", err
 		}

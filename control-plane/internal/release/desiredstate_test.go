@@ -18,7 +18,8 @@ func TestDesiredState(t *testing.T) {
 	defer db.Close()
 	if _, err := db.Exec(`CREATE TABLE bordo_releases (
 		id TEXT, project_id TEXT, image_tag TEXT, region TEXT,
-		strategy TEXT, status TEXT, updated_at DATETIME)`); err != nil {
+		strategy TEXT, status TEXT, expose TEXT DEFAULT 'none', expose_host TEXT DEFAULT '',
+		updated_at DATETIME)`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO bordo_releases
@@ -70,5 +71,40 @@ func TestDesiredState(t *testing.T) {
 	}
 	if empty != "" {
 		t.Errorf("expected empty desired state, got %q", empty)
+	}
+}
+
+func TestRenderManifestExpose(t *testing.T) {
+	// nodeport
+	np, err := renderManifest("p1", "ghcr.io/x/a:1", "rolling", "nodeport", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(np, "type: NodePort") {
+		t.Error("nodeport expose should render Service type NodePort")
+	}
+	if strings.Contains(np, "kind: Ingress") {
+		t.Error("nodeport should not render an Ingress")
+	}
+
+	// ingress with host
+	ing, err := renderManifest("p1", "ghcr.io/x/a:1", "rolling", "ingress", "app.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ing, "kind: Ingress") || !strings.Contains(ing, "host: app.example.com") {
+		t.Error("ingress expose should render an Ingress for the host")
+	}
+	if !strings.Contains(ing, "type: ClusterIP") {
+		t.Error("ingress keeps a ClusterIP service behind the ingress")
+	}
+
+	// none (default)
+	none, err := renderManifest("p1", "ghcr.io/x/a:1", "rolling", "none", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(none, "type: ClusterIP") || strings.Contains(none, "kind: Ingress") {
+		t.Error("none expose should be ClusterIP with no Ingress")
 	}
 }
