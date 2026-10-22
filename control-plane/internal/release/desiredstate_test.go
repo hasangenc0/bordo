@@ -53,6 +53,15 @@ func TestDesiredState(t *testing.T) {
 	if strings.Contains(ds, "d:v1") {
 		t.Error("failed release should not be present")
 	}
+	// The reconciler has namespace-scoped RBAC, so the feed must not include a
+	// cluster-scoped Namespace resource.
+	if strings.Contains(ds, "kind: Namespace") {
+		t.Error("desired state must not contain a Namespace resource")
+	}
+	// Deployment/Service for the included projects should still be present.
+	if !strings.Contains(ds, "kind: Deployment") || !strings.Contains(ds, "kind: Service") {
+		t.Error("expected Deployment and Service in desired state")
+	}
 
 	// empty region yields empty desired state, not an error
 	empty, err := DesiredState(context.Background(), db, "nowhere")

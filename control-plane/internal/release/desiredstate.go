@@ -41,10 +41,33 @@ func DesiredState(ctx context.Context, db *sql.DB, region string) (string, error
 		if err != nil {
 			return "", err
 		}
-		manifests = append(manifests, strings.TrimSpace(m))
+		// Drop any Namespace resource: it's cluster-scoped, and the on-cluster
+		// reconciler runs with a namespace-scoped Role (no permission to manage
+		// namespaces — by design). The apps namespace is created at node join.
+		manifests = append(manifests, strings.TrimSpace(stripNamespaceDocs(m)))
 	}
 	if err := rows.Err(); err != nil {
 		return "", err
 	}
 	return strings.Join(manifests, "\n---\n"), nil
+}
+
+// stripNamespaceDocs removes any `kind: Namespace` document from a multi-doc
+// YAML manifest, leaving the rest intact.
+func stripNamespaceDocs(manifest string) string {
+	docs := strings.Split(manifest, "\n---\n")
+	kept := make([]string, 0, len(docs))
+	for _, d := range docs {
+		isNamespace := false
+		for _, line := range strings.Split(d, "\n") {
+			if strings.TrimSpace(line) == "kind: Namespace" {
+				isNamespace = true
+				break
+			}
+		}
+		if !isNamespace {
+			kept = append(kept, strings.TrimSpace(d))
+		}
+	}
+	return strings.Join(kept, "\n---\n")
 }
