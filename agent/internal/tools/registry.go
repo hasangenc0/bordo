@@ -30,9 +30,14 @@ func NewBordoToolRegistry(cp *CPClient) *ToolRegistry {
 	r.Register(deployLogsTool(cp))
 	r.Register(rollbackTool(cp))
 
-	// Observe tools (stub until BRD-030)
+	// Observe tools
 	r.Register(metricsQueryTool(cp))
 	r.Register(logsQueryTool(cp))
+
+	// Code tools (workspace git: checkout, edit, diff, commit, PR)
+	for _, t := range NewCodeTools(cp, "").Tools() {
+		r.Register(t)
+	}
 
 	// Region / fleet tools
 	r.Register(regionListTool(cp))

@@ -290,6 +290,20 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 					return nil, fmt.Errorf("unknown tool: %s", name)
 				}
 				result, err := tool.Call(ctx, input)
+				trf := WSFrame{Type: "tool_result", ToolName: name}
+				if err != nil {
+					trf.Error = err.Error()
+				} else if raw, ok := result.(json.RawMessage); ok {
+					var decoded any
+					if json.Unmarshal(raw, &decoded) == nil {
+						trf.Data = decoded
+					} else {
+						trf.Data = string(raw)
+					}
+				} else {
+					trf.Data = result
+				}
+				_ = sendFrame(trf)
 				// Emit action event after tool execution.
 				ae := ActionEvent{
 					Type:         "action",
@@ -305,6 +319,9 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			},
 			func(text string) {
 				_ = sendFrame(WSFrame{Type: "message", Role: "assistant", Content: text})
+				if fullReply != "" {
+					fullReply += "\n\n" // keep text from separate model turns apart in saved history
+				}
 				fullReply += text
 			},
 			func(name string, input map[string]any) {
@@ -506,10 +523,11 @@ func (s *Server) handleMCPCall(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleCPProxy returns an http.Handler that proxies all requests to the control plane.
-// When mounted at /v1, chi strips the /v1 prefix so r.URL.Path starts after /v1.
+// chi's Mount does not rewrite r.URL.Path (only the routing context), so the
+// /v1 prefix is still present and must be stripped before re-prefixing.
 func (s *Server) handleCPProxy() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		subPath := r.URL.Path
+		subPath := strings.TrimPrefix(r.URL.Path, "/v1")
 		if subPath == "" {
 			subPath = "/"
 		}

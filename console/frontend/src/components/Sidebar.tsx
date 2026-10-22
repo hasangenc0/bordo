@@ -1,11 +1,10 @@
 import { NavLink } from 'react-router-dom'
 
 const NAV_ITEMS = [
-  { to: '/services', label: 'Services', icon: '○' },
-  { to: '/build', label: 'Build', icon: '⚙' },
-  { to: '/release', label: 'Release', icon: '↑' },
-  { to: '/observe', label: 'Observe', icon: '◎' },
-  { to: '/templates', label: 'Templates', icon: '▣' },
+  { to: '/', label: 'Chat', icon: '✦', end: true },
+  { to: '/apps', label: 'Apps', icon: '○', end: false },
+  { to: '/regions', label: 'Regions', icon: '◎', end: false },
+  { to: '/observe', label: 'Observe', icon: '∿', end: false },
 ]
 
 export function Sidebar() {
@@ -19,9 +18,8 @@ export function Sidebar() {
             <li key={item.to}>
               <NavLink
                 to={item.to}
-                className={({ isActive }: { isActive: boolean }) =>
-                  `sidebar-item${isActive ? ' active' : ''}`
-                }
+                end={item.end}
+                className={({ isActive }: { isActive: boolean }) => `sidebar-item${isActive ? ' active' : ''}`}
               >
                 <span className="sidebar-icon">{item.icon}</span>
                 {item.label}
@@ -32,12 +30,7 @@ export function Sidebar() {
       </div>
 
       <div className="sidebar-bottom">
-        <NavLink
-          to="/settings"
-          className={({ isActive }: { isActive: boolean }) =>
-            `sidebar-item${isActive ? ' active' : ''}`
-          }
-        >
+        <NavLink to="/settings" className={({ isActive }: { isActive: boolean }) => `sidebar-item${isActive ? ' active' : ''}`}>
           <span className="sidebar-icon">⚙</span>
           Settings
         </NavLink>

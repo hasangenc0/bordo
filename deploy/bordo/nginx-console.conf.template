@@ -3,11 +3,18 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
+    # Everything below (pages, /api, /ws) needs the console login. nginx adds the
+    # agent token to upstream requests, so without this anyone who can reach this
+    # port would control the agent. The entrypoint refuses to start without a password.
+    auth_basic "Bordo";
+    auth_basic_user_file /etc/nginx/.htpasswd;
+
     gzip on;
     gzip_types text/plain text/css application/json application/javascript text/xml application/xml text/javascript;
     gzip_min_length 1000;
 
     location /health {
+        auth_basic off;
         return 200 "ok";
         add_header Content-Type text/plain;
     }

@@ -47,6 +47,7 @@ Typical flow:
 		platformStatusCmd(),
 		platformLogsCmd(),
 		platformTokenCmd(),
+		platformPasswordCmd(),
 		platformUpgradeCmd(),
 	)
 	return cmd
@@ -85,18 +86,24 @@ func platformInstallCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
+				consolePW, err := randomToken()
+				if err != nil {
+					return err
+				}
 				env := fmt.Sprintf(
-					"# Bordo platform config — edit ports here; keep the token secret.\n"+
+					"# Bordo platform config — edit ports here; keep the secrets secret.\n"+
 						"BORDO_INTERNAL_TOKEN=%s\n"+
+						"# Login for the web console (username: bordo).\n"+
+						"BORDO_CONSOLE_PASSWORD=%s\n"+
 						"BORDOD_PORT=7401\n"+
 						"AGENT_PORT=7402\n"+
 						"CONSOLE_PORT=3000\n",
-					token,
+					token, consolePW,
 				)
 				if err := os.WriteFile(envPath, []byte(env), 0o600); err != nil {
 					return fmt.Errorf("writing .env: %w", err)
 				}
-				fmt.Printf("Generated %s (internal token, ports)\n", envPath)
+				fmt.Printf("Generated %s (internal token, console password, ports)\n", envPath)
 			} else {
 				fmt.Printf("Kept existing %s\n", envPath)
 			}
@@ -139,8 +146,17 @@ func platformUpCmd() *cobra.Command {
 						"To start anyway, re-run with --force.", desc)
 				}
 			}
+			// Installs from before the console login existed have no password yet.
+			pw, created, err := ensureConsolePassword(filepath.Join(platformDir(), ".env"))
+			if err != nil {
+				return err
+			}
 			if err := compose("up", "-d", "--remove-orphans").Run(); err != nil {
 				return fmt.Errorf("docker compose up: %w", err)
+			}
+			if created {
+				fmt.Printf("\nThe web console now requires a login. Username: bordo   Password: %s\n", pw)
+				fmt.Println("(stored in " + filepath.Join(platformDir(), ".env") + "; show it again with 'bordo platform password')")
 			}
 			fmt.Println("\nBordo is up. Next:")
 			fmt.Println("  bordo platform token    # get the setup token")
@@ -376,6 +392,51 @@ func readEnvValue(path, key string) string {
 		}
 	}
 	return ""
+}
+
+// ensureConsolePassword returns BORDO_CONSOLE_PASSWORD from the .env file,
+// generating and appending one when it is missing. created reports whether a
+// new password was written.
+func ensureConsolePassword(envPath string) (pw string, created bool, err error) {
+	if pw = readEnvValue(envPath, "BORDO_CONSOLE_PASSWORD"); pw != "" {
+		return pw, false, nil
+	}
+	pw, err = randomToken()
+	if err != nil {
+		return "", false, err
+	}
+	existing, _ := os.ReadFile(envPath)
+	prefix := ""
+	if len(existing) > 0 && !strings.HasSuffix(string(existing), "\n") {
+		prefix = "\n"
+	}
+	f, err := os.OpenFile(envPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return "", false, fmt.Errorf("updating .env: %w", err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(prefix + "BORDO_CONSOLE_PASSWORD=" + pw + "\n"); err != nil {
+		return "", false, fmt.Errorf("updating .env: %w", err)
+	}
+	return pw, true, nil
+}
+
+func platformPasswordCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "password",
+		Short: "Show the web console login (username: bordo)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := ensureInstalled(); err != nil {
+				return err
+			}
+			pw, _, err := ensureConsolePassword(filepath.Join(platformDir(), ".env"))
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Username: bordo\nPassword: %s\n", pw)
+			return nil
+		},
+	}
 }
 
 func ensureInstalled() error {

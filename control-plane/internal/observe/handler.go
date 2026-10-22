@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -60,12 +62,48 @@ func (h *Handler) QueryMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	region := r.URL.Query().Get("region")
-	results, err := h.client.QueryMetrics(r.Context(), promql, region)
+	rp, err := parseRange(r.URL.Query())
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	results, err := h.client.QueryMetricsRange(r.Context(), promql, region, rp)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
 	writeJSON(w, http.StatusOK, results)
+}
+
+// parseRange reads start/end (unix seconds) and step ("60s" or seconds).
+// No step means an instant query.
+func parseRange(q url.Values) (RangeParams, error) {
+	step := q.Get("step")
+	if step == "" {
+		return RangeParams{}, nil
+	}
+	if _, err := strconv.ParseFloat(step, 64); err != nil {
+		if _, err := time.ParseDuration(step); err != nil {
+			return RangeParams{}, fmt.Errorf("invalid step %q", step)
+		}
+	}
+	rp := RangeParams{End: time.Now(), Step: step}
+	if e := q.Get("end"); e != "" {
+		n, err := strconv.ParseInt(e, 10, 64)
+		if err != nil {
+			return RangeParams{}, fmt.Errorf("invalid end %q", e)
+		}
+		rp.End = time.Unix(n, 0)
+	}
+	rp.Start = rp.End.Add(-time.Hour)
+	if s := q.Get("start"); s != "" {
+		n, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return RangeParams{}, fmt.Errorf("invalid start %q", s)
+		}
+		rp.Start = time.Unix(n, 0)
+	}
+	return rp, nil
 }
 
 // QueryLogs handles GET /v1/observe/logs?query=<logql>&start=<>&end=<>&region=<optional>

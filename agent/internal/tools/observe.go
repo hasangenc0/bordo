@@ -1,46 +1,73 @@
 package tools
 
-import "context"
+import (
+	"context"
+	"errors"
+	"net/url"
+	"strconv"
+)
 
-var notImplementedResponse = map[string]string{
-	"status":  "not_implemented",
-	"message": "observability stack not yet deployed (BRD-030)",
+func observeParams(params map[string]any, keys ...string) url.Values {
+	q := url.Values{}
+	for _, k := range keys {
+		switch v := params[k].(type) {
+		case string:
+			if v != "" {
+				q.Set(k, v)
+			}
+		case float64:
+			q.Set(k, strconv.FormatInt(int64(v), 10))
+		}
+	}
+	return q
 }
 
-func metricsQueryTool(_ *CPClient) *Tool {
+func metricsQueryTool(cp *CPClient) *Tool {
 	return &Tool{
-		Name:        "metrics_query",
-		Description: "Query metrics using PromQL (requires BRD-030 observability stack)",
+		Name: "metrics_query",
+		Description: "Query metrics with PromQL across regions. Without step it is an instant query; " +
+			"with step (e.g. \"60s\") it is a range query over start..end (unix seconds, default last hour).",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"query": map[string]any{"type": "string", "description": "PromQL query string"},
-				"start": map[string]any{"type": "string", "description": "Start time (RFC3339 or Unix timestamp)"},
-				"end":   map[string]any{"type": "string", "description": "End time (RFC3339 or Unix timestamp)"},
+				"query":  map[string]any{"type": "string", "description": "PromQL query string"},
+				"region": map[string]any{"type": "string", "description": "Limit to one region (optional)"},
+				"start":  map[string]any{"type": "string", "description": "Range start, unix seconds (optional)"},
+				"end":    map[string]any{"type": "string", "description": "Range end, unix seconds (optional)"},
+				"step":   map[string]any{"type": "string", "description": "Range step, e.g. 60s (optional; makes this a range query)"},
 			},
 			"required": []string{"query"},
 		},
-		CallFn: func(_ context.Context, _ map[string]any) (any, error) {
-			return notImplementedResponse, nil
+		CallFn: func(ctx context.Context, params map[string]any) (any, error) {
+			if s, _ := params["query"].(string); s == "" {
+				return nil, errors.New("query is required")
+			}
+			q := observeParams(params, "query", "region", "start", "end", "step")
+			return cp.Get(ctx, "/v1/observe/metrics?"+q.Encode())
 		},
 	}
 }
 
-func logsQueryTool(_ *CPClient) *Tool {
+func logsQueryTool(cp *CPClient) *Tool {
 	return &Tool{
 		Name:        "logs_query",
-		Description: "Query logs using LogQL (requires BRD-030 observability stack)",
+		Description: "Query logs with LogQL across regions (default last hour, max 100 lines per region).",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"query": map[string]any{"type": "string", "description": "LogQL query string"},
-				"start": map[string]any{"type": "string", "description": "Start time (RFC3339 or Unix timestamp)"},
-				"end":   map[string]any{"type": "string", "description": "End time (RFC3339 or Unix timestamp)"},
+				"query":  map[string]any{"type": "string", "description": "LogQL query string"},
+				"region": map[string]any{"type": "string", "description": "Limit to one region (optional)"},
+				"start":  map[string]any{"type": "string", "description": "Start as unix nanoseconds (optional)"},
+				"end":    map[string]any{"type": "string", "description": "End as unix nanoseconds (optional)"},
 			},
 			"required": []string{"query"},
 		},
-		CallFn: func(_ context.Context, _ map[string]any) (any, error) {
-			return notImplementedResponse, nil
+		CallFn: func(ctx context.Context, params map[string]any) (any, error) {
+			if s, _ := params["query"].(string); s == "" {
+				return nil, errors.New("query is required")
+			}
+			q := observeParams(params, "query", "region", "start", "end")
+			return cp.Get(ctx, "/v1/observe/logs?"+q.Encode())
 		},
 	}
 }

@@ -42,6 +42,17 @@ type regionResult struct {
 // QueryMetrics queries all regions (or a specific one) for a PromQL expression.
 // Returns a map of region → raw JSON response.
 func (m *MultiClient) QueryMetrics(ctx context.Context, promql, region string) (map[string]json.RawMessage, error) {
+	return m.QueryMetricsRange(ctx, promql, region, RangeParams{})
+}
+
+// RangeParams selects a range query. A zero Step means an instant query.
+type RangeParams struct {
+	Start, End time.Time
+	Step       string // VictoriaMetrics step, e.g. "60s"
+}
+
+// QueryMetricsRange runs an instant query, or a query_range when rp.Step is set.
+func (m *MultiClient) QueryMetricsRange(ctx context.Context, promql, region string, rp RangeParams) (map[string]json.RawMessage, error) {
 	targets := m.filter(region)
 	if len(targets) == 0 {
 		return nil, fmt.Errorf("no backends configured (deploy the observe stack and set vm_url per region)")
@@ -55,11 +66,23 @@ func (m *MultiClient) QueryMetrics(ctx context.Context, promql, region string) (
 		wg.Add(1)
 		go func(b RegionBackend) {
 			defer wg.Done()
-			params := url.Values{
-				"query": {promql},
-				"time":  {fmt.Sprintf("%d", time.Now().Unix())},
+			var data json.RawMessage
+			var err error
+			if rp.Step != "" {
+				params := url.Values{
+					"query": {promql},
+					"start": {fmt.Sprintf("%d", rp.Start.Unix())},
+					"end":   {fmt.Sprintf("%d", rp.End.Unix())},
+					"step":  {rp.Step},
+				}
+				data, err = m.get(ctx, b.VMURL+"/api/v1/query_range?"+params.Encode())
+			} else {
+				params := url.Values{
+					"query": {promql},
+					"time":  {fmt.Sprintf("%d", time.Now().Unix())},
+				}
+				data, err = m.get(ctx, b.VMURL+"/api/v1/query?"+params.Encode())
 			}
-			data, err := m.get(ctx, b.VMURL+"/api/v1/query?"+params.Encode())
 			results <- regionResult{region: b.Region, data: data, err: err}
 		}(b)
 	}
