@@ -444,7 +444,33 @@ func (s *Server) handleFleetDesiredState(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
+	// If any workload pulls from GHCR, ship a pull secret so the reconciler can
+	// pull private images. The rendered Deployments already reference
+	// "bordo-registry-creds" for ghcr.io images; here we create that Secret.
+	if owner := firstGHCROwner(manifests); owner != "" {
+		if tok, _, terr := s.githubHandler.GetInstallationTokenFromStore(r.Context()); terr == nil && tok != "" {
+			if secret, serr := fleet.RenderImagePullSecret("bordo-apps", "ghcr.io", owner, tok); serr == nil {
+				manifests = secret + "---\n" + manifests
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"region": region, "manifests": manifests})
+}
+
+// firstGHCROwner returns the owner from the first ghcr.io/<owner>/... image
+// reference in the manifests, or "" if none. Used to build the GHCR pull secret
+// without an extra API round-trip.
+func firstGHCROwner(manifests string) string {
+	i := strings.Index(manifests, "ghcr.io/")
+	if i < 0 {
+		return ""
+	}
+	rest := manifests[i+len("ghcr.io/"):]
+	j := strings.IndexByte(rest, '/')
+	if j < 0 {
+		return ""
+	}
+	return rest[:j]
 }
 
 func (s *Server) handleGithubStatus(w http.ResponseWriter, r *http.Request) {

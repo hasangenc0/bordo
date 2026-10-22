@@ -11,10 +11,15 @@ import (
 	"strings"
 )
 
-// EnsureImagePullSecret creates or updates a kubernetes.io/dockerconfigjson Secret
-// named "bordo-registry-creds" in the given namespace on the cluster pointed to by
-// kubeconfigPath.
-func EnsureImagePullSecret(ctx context.Context, kubeconfigPath, registryServer, username, password, namespace string) error {
+// RenderImagePullSecret returns a kubernetes.io/dockerconfigjson Secret manifest
+// (named "bordo-registry-creds") for a registry, as YAML suitable for kubectl
+// apply. It lets the control plane ship pull credentials to a cluster via the
+// desired-state feed so the on-cluster reconciler can pull private images
+// (ADR-0006 Phase 2/3).
+//
+// NOTE: today this carries the broad GHCR user token. The Phase 3 hardening is
+// to issue a scoped, short-lived read:packages token instead.
+func RenderImagePullSecret(namespace, registryServer, username, password string) (string, error) {
 	authStr := base64.StdEncoding.EncodeToString([]byte(username + ":" + password))
 	dockerConfig := map[string]any{
 		"auths": map[string]any{
@@ -27,10 +32,9 @@ func EnsureImagePullSecret(ctx context.Context, kubeconfigPath, registryServer, 
 	}
 	dockerConfigJSON, err := json.Marshal(dockerConfig)
 	if err != nil {
-		return fmt.Errorf("marshal docker config: %w", err)
+		return "", fmt.Errorf("marshal docker config: %w", err)
 	}
-
-	manifest := fmt.Sprintf(`apiVersion: v1
+	return fmt.Sprintf(`apiVersion: v1
 kind: Secret
 metadata:
   name: bordo-registry-creds
@@ -38,7 +42,17 @@ metadata:
 type: kubernetes.io/dockerconfigjson
 data:
   .dockerconfigjson: %s
-`, namespace, base64.StdEncoding.EncodeToString(dockerConfigJSON))
+`, namespace, base64.StdEncoding.EncodeToString(dockerConfigJSON)), nil
+}
+
+// EnsureImagePullSecret creates or updates a kubernetes.io/dockerconfigjson Secret
+// named "bordo-registry-creds" in the given namespace on the cluster pointed to by
+// kubeconfigPath.
+func EnsureImagePullSecret(ctx context.Context, kubeconfigPath, registryServer, username, password, namespace string) error {
+	manifest, err := RenderImagePullSecret(namespace, registryServer, username, password)
+	if err != nil {
+		return err
+	}
 
 	kubectlPath, err := exec.LookPath("kubectl")
 	if err != nil {
