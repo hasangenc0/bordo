@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	_ "embed"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -281,25 +282,70 @@ func extractSetupToken(logs string) string {
 }
 
 func platformUpgradeCmd() *cobra.Command {
-	return &cobra.Command{
+	var force bool
+	cmd := &cobra.Command{
 		Use:   "upgrade",
 		Short: "Pull the latest images and restart services (data preserved)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := ensureInstalled(); err != nil {
 				return err
 			}
-			fmt.Println("Pulling latest images...")
-			if err := compose("pull").Run(); err != nil {
-				return fmt.Errorf("docker compose pull: %w", err)
-			}
-			fmt.Println("Restarting...")
-			if err := compose("up", "-d", "--remove-orphans").Run(); err != nil {
-				return fmt.Errorf("docker compose up: %w", err)
-			}
-			fmt.Println("Upgrade complete.")
-			return nil
+			return upgradeStack(platformDir(), force)
 		},
 	}
+	cmd.Flags().BoolVar(&force, "force", false, "upgrade even if another Bordo stack is detected (advanced)")
+	return cmd
+}
+
+// upgradeStack pulls images and restarts the compose stack in dir. When dir is
+// the CLI-managed stack but a different Bordo stack already owns the ports (for
+// example a git-clone install under /opt/bordo), it refuses: starting a second
+// stack would fail on the port bind and leave a half-created project behind.
+func upgradeStack(dir string, force bool) error {
+	if !force && sameDir(dir, platformDir()) {
+		if desc, conflict := conflictingStack(); conflict {
+			msg := fmt.Sprintf("Another Bordo stack is running: %s.\n"+
+				"Upgrading the CLI-managed stack (%s) would start a second stack and clash on ports 7401/7402/3000.\n", desc, dir)
+			const classic = "/opt/bordo/deploy/bordo"
+			if _, err := os.Stat(filepath.Join(classic, "docker-compose.yml")); err == nil {
+				msg += "Upgrade the running stack instead:\n  bordo upgrade --dir " + classic + "\n"
+			}
+			msg += "To upgrade this stack anyway, re-run with --force."
+			return errors.New(msg)
+		}
+	}
+
+	fmt.Println("Pulling latest Bordo images...")
+	if err := composeInDir(dir, "pull").Run(); err != nil {
+		return fmt.Errorf("docker compose pull: %w", err)
+	}
+
+	// The console login arrived after some installs were created: add a password
+	// to an existing .env so the console container can start.
+	envPath := filepath.Join(dir, ".env")
+	if _, err := os.Stat(envPath); err == nil {
+		pw, created, err := ensureConsolePassword(envPath)
+		if err != nil {
+			return err
+		}
+		if created {
+			fmt.Printf("\nThe web console now requires a login. Username: bordo   Password: %s\n", pw)
+			fmt.Printf("(stored in %s)\n\n", envPath)
+		}
+	}
+
+	fmt.Println("Restarting services...")
+	if err := composeInDir(dir, "up", "-d", "--remove-orphans").Run(); err != nil {
+		return fmt.Errorf("docker compose up: %w", err)
+	}
+	fmt.Println("Upgrade complete.")
+	return nil
+}
+
+func sameDir(a, b string) bool {
+	aa, errA := filepath.Abs(a)
+	bb, errB := filepath.Abs(b)
+	return errA == nil && errB == nil && filepath.Clean(aa) == filepath.Clean(bb)
 }
 
 // cliProject is the docker compose project name of the CLI-managed stack.

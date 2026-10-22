@@ -13,6 +13,7 @@ import (
 // without touching data volumes.
 func UpgradeCmd() *cobra.Command {
 	var composeDir string
+	var force bool
 	cmd := &cobra.Command{
 		Use:   "upgrade",
 		Short: "Pull the latest Bordo images and restart services",
@@ -26,18 +27,10 @@ or pass --dir for a manually managed compose directory.`,
 			if err != nil {
 				return err
 			}
-			fmt.Println("Pulling latest Bordo images...")
-			if err := composeInDir(dir, "pull").Run(); err != nil {
-				return fmt.Errorf("docker compose pull: %w", err)
-			}
-			fmt.Println("Restarting services...")
-			if err := composeInDir(dir, "up", "-d", "--remove-orphans").Run(); err != nil {
-				return fmt.Errorf("docker compose up: %w", err)
-			}
-			fmt.Println("Upgrade complete.")
-			return nil
+			return upgradeStack(dir, force)
 		},
 	}
+	cmd.Flags().BoolVar(&force, "force", false, "upgrade even if another Bordo stack is detected (advanced)")
 	cmd.Flags().StringVar(&composeDir, "dir", "", "path to a compose directory (default: ~/.bordo/deploy, then common install paths)")
 	return cmd
 }
