@@ -88,6 +88,7 @@ For a real domain with HTTPS, deploy with `--expose ingress --host app.yourdomai
 
 ## What you can build
 
+- **Go** web services, scheduled jobs, and Kafka consumers/producers: static binaries that run in a few MB of RAM, for when you want to keep servers small
 - **Java** web services, workers, Kafka consumers/producers, scheduled jobs, and a database layer for any SQL database
 - **TypeScript / React** front-ends and Node back-ends
 

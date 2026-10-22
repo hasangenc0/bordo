@@ -1,0 +1,19 @@
+name: go-kafka
+description: Go Kafka consumer/producer on segmentio/kafka-go; low memory, no JVM
+category: Backend
+icon: "🐹"
+author: Bordo Official
+runtime: go
+version: "1.0"
+variables:
+  - name: ProjectName
+    description: Application name (kebab-case)
+    default: my-kafka-service
+  - name: KafkaTopic
+    description: Primary Kafka topic to consume/produce
+    default: events
+health:
+  path: /healthz
+  port: 8080
+binary_paths:
+  - ".github/workflows/bordo-build.yml"

@@ -1,0 +1,9 @@
+# Compiled binaries
+/app
+/server
+*.exe
+*.test
+*.out
+
+# Local env
+.env

@@ -104,13 +104,17 @@ and reports the URL. Keep chatting to inspect logs, redeploy, or roll back.
 **The explicit way, plain commands:**
 
 ```bash
-bordo project create hello-api --template java-web-service
+bordo project create hello-api --template go-web-service
 bordo build trigger hello-api                       # builds in GitHub Actions → image in GHCR
 bordo build status <build-id>                       # wait for "success"
 
 bordo deploy create <project-id> ghcr.io/<owner>/hello-api:<tag> \
   --region <region> --expose nodeport
 ```
+
+> Templates: `go-web-service`, `go-job`, and `go-kafka` produce static Go binaries
+> that run in a few MB of RAM. The `java-*` templates carry a richer SDK. List them
+> all with `bordo template list`, or just ask the agent for the kind of app you want.
 
 `--expose` controls public reach:
 

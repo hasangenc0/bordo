@@ -7,8 +7,15 @@ have to rediscover them.
 
 ## Available templates
 
+Go templates produce a static binary on a distroless image, so the running
+container holds a few MB of RAM and starts in milliseconds. Reach for them when
+memory matters; the Java templates carry a richer SDK and Spring ecosystem.
+
 | Template | Language | What it produces |
 |---|---|---|
+| `go-web-service` | Go | HTTP service on stdlib `net/http`, health endpoints, structured logs; static binary |
+| `go-job` | Go | Scheduled job runner (interval ticker) with graceful shutdown; static binary |
+| `go-kafka` | Go | Kafka consumer + producer on `segmentio/kafka-go`; static binary |
 | `java-web-service` | Java / Spring Boot | HTTP API with OpenAPI, structured logging, health endpoints, OTel |
 | `java-worker` | Java | Background processor, queue integration, retry/DLQ, OTel |
 | `java-kafka` | Java | Kafka consumer + producer with schema registry support |

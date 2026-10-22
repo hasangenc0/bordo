@@ -1,0 +1,16 @@
+name: go-job
+description: Go scheduled job runner with graceful shutdown; low memory, no JVM
+category: Backend
+icon: "🐹"
+author: Bordo Official
+runtime: go
+version: "1.0"
+variables:
+  - name: ProjectName
+    description: Application name (kebab-case)
+    default: my-job
+health:
+  path: /healthz
+  port: 8080
+binary_paths:
+  - ".github/workflows/bordo-build.yml"

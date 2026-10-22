@@ -54,7 +54,7 @@ requires a **DeepSeek API key** (the agent's LLM). Steps:
 | `bordo platform upgrade` | Pull latest images + restart; **data preserved**. |
 | `bordo github login` | Connect GitHub via device flow (required before builds). |
 | `bordo region add <name>` | Register a deploy target; prints a one-line node-join command to run on the machine. |
-| `bordo project create <name> --template <t>` | Scaffold a new project. |
+| `bordo project create <name> --template <t>` | Scaffold a new project. Go templates (`go-web-service`, `go-job`, `go-kafka`) are static binaries that run in a few MB of RAM; `java-*` carry a richer SDK. `bordo template list` shows all. |
 | `bordo build trigger <app>` | Build the project's image in GitHub Actions → GHCR. |
 | `bordo deploy create <project-id> <image> --region <r> [--expose nodeport\|ingress --host <h>]` | Deploy a release; `--expose` makes it publicly reachable. |
 
@@ -98,7 +98,7 @@ build fails; the real cause is GitHub not being connected (`bordo github login`)
   pull secret in the desired-state feed; ensure GitHub is connected
   (`bordo github login`) so the token is available.
 - **App returns 404 on `/`** → the app simply has no route there; the
-  `java-web-service` template serves `GET /api/v1/hello`, not `/`.
+  `java-web-service` and `go-web-service` templates serve `GET /api/v1/hello`, not `/`.
 
 ## Mental model
 
