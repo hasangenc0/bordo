@@ -64,6 +64,12 @@ func (c *Controller) reconcile(ctx context.Context) {
 	}
 
 	for _, r := range releases {
+		// Skip regions reconciled by the on-cluster agent (ADR-0006 Phase 2):
+		// those pull their desired state, so the control plane must NOT push to
+		// them. Leave the release 'reconciling' for the reconciler to apply.
+		if c.regionIsPullManaged(ctx, r.region) {
+			continue
+		}
 		if err := c.apply(ctx, r.id, r.projectID, r.imageTag, r.region, r.strategy); err != nil {
 			c.logger.Error("release controller: apply failed", "id", r.id, "err", err)
 			c.setStatus(ctx, r.id, "failed")
@@ -72,6 +78,17 @@ func (c *Controller) reconcile(ctx context.Context) {
 			c.setStatus(ctx, r.id, "deployed")
 		}
 	}
+}
+
+// regionIsPullManaged reports whether a region has an active cluster token,
+// meaning an on-cluster reconciler pulls its desired state. The push controller
+// skips such regions.
+func (c *Controller) regionIsPullManaged(ctx context.Context, region string) bool {
+	var n int
+	err := c.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM fleet_cluster_tokens WHERE region_name = ? AND revoked = 0`,
+		region).Scan(&n)
+	return err == nil && n > 0
 }
 
 func (c *Controller) apply(ctx context.Context, id, projectID, imageTag, regionName, strategy string) error {
