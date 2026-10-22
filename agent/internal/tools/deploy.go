@@ -30,7 +30,9 @@ func deployTool(cp *CPClient) *Tool {
 		Name: "deploy",
 		Description: "Deploy an image to one or more regions. " +
 			"Use 'regions' for multi-region deployment (e.g. deploy web-service-a to us-east, eu-west, and ap-south at once). " +
-			"Use 'region' for a single region. Returns a release_group_id when deploying to multiple regions.",
+			"Use 'region' for a single region. Returns a release_group_id when deploying to multiple regions. " +
+			"Set 'expose' to make the app publicly reachable: 'nodeport' serves it at http://<server-ip>:<nodeport>, " +
+			"'ingress' (with 'host') serves it at a hostname via an ingress controller. Default 'none' keeps it internal.",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -47,10 +49,29 @@ func deployTool(cp *CPClient) *Tool {
 					"description": "Rollout strategy: rolling, canary, or blue-green",
 					"enum":        []string{"rolling", "canary", "blue-green"},
 				},
+				"expose": map[string]any{
+					"type":        "string",
+					"description": "Public exposure: none (internal, default), nodeport (http://<server-ip>:<nodeport>), or ingress (hostname via ingress controller)",
+					"enum":        []string{"none", "nodeport", "ingress"},
+				},
+				"host": map[string]any{
+					"type":        "string",
+					"description": "Hostname for ingress exposure, e.g. app.example.com (required when expose=ingress)",
+				},
 			},
 			"required": []string{"project_id", "image_tag"},
 		},
 		CallFn: func(ctx context.Context, params map[string]any) (any, error) {
+			// The control plane expects "expose_host"; the tool takes "host".
+			if host, ok := params["host"]; ok {
+				params["expose_host"] = host
+				delete(params, "host")
+			}
+			if expose, _ := params["expose"].(string); expose == "ingress" {
+				if h, _ := params["expose_host"].(string); h == "" {
+					return nil, fmt.Errorf("host is required when expose=ingress")
+				}
+			}
 			return cp.Post(ctx, "/v1/releases", params)
 		},
 	}

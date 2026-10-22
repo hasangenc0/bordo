@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 )
 
@@ -21,56 +22,47 @@ func regionListTool(cp *CPClient) *Tool {
 
 func regionAddTool(cp *CPClient) *Tool {
 	return &Tool{
-		Name:        "region_add",
-		Description: "Register a new fleet region (without bootstrapping). Use region_bootstrap to install k3s on a VM.",
+		Name: "region_add",
+		Description: "Register a new deploy target (region) and mint a one-time join token. " +
+			"Returns a command the user runs ON the target machine to join the fleet — " +
+			"it installs k3s and connects outbound (no SSH key is ever needed or stored). " +
+			"This is the only way to add a machine; there is no SSH-bootstrap path.",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"name":       map[string]any{"type": "string", "description": "Region name, e.g. us-east"},
-				"kubeconfig": map[string]any{"type": "string", "description": "Optional kubeconfig YAML if the cluster already exists"},
+				"name": map[string]any{"type": "string", "description": "Region name, e.g. us-east"},
 			},
 			"required": []string{"name"},
-		},
-		CallFn: func(ctx context.Context, params map[string]any) (any, error) {
-			return cp.Post(ctx, "/v1/regions", params)
-		},
-	}
-}
-
-func regionBootstrapTool(cp *CPClient) *Tool {
-	return &Tool{
-		Name: "region_bootstrap",
-		Description: "Bootstrap k3s on a raw VM over SSH and register it as a Bordo region. " +
-			"The region must already exist (use region_add first). " +
-			"Returns immediately; bootstrapping happens in the background. " +
-			"Poll region_list to check when status becomes 'healthy'.",
-		Schema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"name":    map[string]any{"type": "string", "description": "Region name (must already exist)"},
-				"host":    map[string]any{"type": "string", "description": "VM IP address or hostname"},
-				"port":    map[string]any{"type": "integer", "description": "SSH port (default 22)"},
-				"user":    map[string]any{"type": "string", "description": "SSH username (default root)"},
-				"ssh_key": map[string]any{"type": "string", "description": "PEM-encoded SSH private key content"},
-			},
-			"required": []string{"name", "host", "ssh_key"},
 		},
 		CallFn: func(ctx context.Context, params map[string]any) (any, error) {
 			name, ok := params["name"].(string)
 			if !ok || name == "" {
 				return nil, fmt.Errorf("name is required")
 			}
-			body := map[string]any{
-				"host":    params["host"],
-				"ssh_key": params["ssh_key"],
+			if _, err := cp.Post(ctx, "/v1/regions", map[string]any{"name": name}); err != nil {
+				return nil, fmt.Errorf("register region: %w", err)
 			}
-			if port, ok := params["port"]; ok {
-				body["port"] = port
+			raw, err := cp.Post(ctx, "/v1/regions/"+name+"/join-tokens", map[string]any{})
+			if err != nil {
+				return nil, fmt.Errorf("mint join token: %w", err)
 			}
-			if user, ok := params["user"]; ok {
-				body["user"] = user
+			var tok struct {
+				Token     string `json:"token"`
+				ExpiresAt string `json:"expires_at"`
 			}
-			return cp.Post(ctx, "/v1/regions/"+name+"/bootstrap", body)
+			_ = json.Unmarshal(raw, &tok)
+			joinCmd := "curl -fsSL https://raw.githubusercontent.com/hasangenc0/bordo/master/install-node.sh | \\\n" +
+				"  BORDO_CP_URL=<control-plane-url-reachable-from-the-machine> \\\n" +
+				"  BORDO_JOIN_TOKEN=" + tok.Token + " sh"
+			return map[string]any{
+				"region":       name,
+				"expires_at":   tok.ExpiresAt,
+				"join_command": joinCmd,
+				"instructions": "Tell the user to run join_command ON the target machine. " +
+					"Replace <control-plane-url-reachable-from-the-machine> with the Bordo " +
+					"server's address (e.g. http://<server-ip>:7401). The token is single-use " +
+					"and expires soon; call region_add again to mint another if needed.",
+			}, nil
 		},
 	}
 }
