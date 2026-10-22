@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/hasangenc0/bordo/control-plane/internal/approval"
 	"github.com/hasangenc0/bordo/control-plane/internal/buildorchestrator"
 	"github.com/hasangenc0/bordo/control-plane/internal/config"
@@ -28,8 +30,6 @@ import (
 	"github.com/hasangenc0/bordo/control-plane/internal/store"
 	bordobtemplate "github.com/hasangenc0/bordo/control-plane/internal/template"
 	"github.com/hasangenc0/bordo/control-plane/internal/version"
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
 )
 
 // Server is the bordod HTTP API server.
@@ -299,6 +299,9 @@ type templateInfo struct {
 }
 
 var builtinTemplates = []templateInfo{
+	{"go-web-service", "go", "Go HTTP service on stdlib net/http; static binary, low memory, fast cold start"},
+	{"go-job", "go", "Go scheduled job runner with graceful shutdown; static binary, low memory"},
+	{"go-kafka", "go", "Go Kafka consumer/producer on segmentio/kafka-go; static binary, low memory"},
 	{"java-web-service", "java", "Spring Boot 3 REST service with OpenTelemetry and health actuator"},
 	{"java-worker", "java", "Spring Boot background worker using the bordo-worker SDK"},
 	{"java-kafka", "java", "Spring Boot Kafka consumer/producer using the bordo-kafka SDK"},
