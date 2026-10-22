@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os/exec"
@@ -16,7 +17,9 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-const githubAPIBase = "https://api.github.com"
+// githubAPIBase is the GitHub REST API root. A var (not const) so tests can
+// point it at a local server.
+var githubAPIBase = "https://api.github.com"
 
 // GenerateJWT creates a JWT signed with the app's RSA private key, valid 10 minutes.
 func GenerateJWT(appID int64, privateKeyPEM string) (string, error) {
@@ -36,10 +39,33 @@ func GenerateJWT(appID int64, privateKeyPEM string) (string, error) {
 
 // GetInstallationToken exchanges a JWT for a short-lived installation access token.
 func GetInstallationToken(appJWT string, installationID int64) (string, error) {
+	return getInstallationToken(appJWT, installationID, nil)
+}
+
+// GetScopedInstallationToken mints a short-lived installation token restricted
+// to the given permissions, e.g. {"packages": "read"} for pulling private
+// images (ADR-0006 Phase 3 — least-privilege). Only available on the GitHub App
+// path; a device-flow/OAuth user token cannot be programmatically narrowed.
+func GetScopedInstallationToken(appJWT string, installationID int64, permissions map[string]string) (string, error) {
+	return getInstallationToken(appJWT, installationID, permissions)
+}
+
+func getInstallationToken(appJWT string, installationID int64, permissions map[string]string) (string, error) {
 	url := fmt.Sprintf("%s/app/installations/%d/access_tokens", githubAPIBase, installationID)
-	req, err := http.NewRequest(http.MethodPost, url, nil)
+	var body io.Reader
+	if len(permissions) > 0 {
+		b, err := json.Marshal(map[string]any{"permissions": permissions})
+		if err != nil {
+			return "", err
+		}
+		body = bytes.NewReader(b)
+	}
+	req, err := http.NewRequest(http.MethodPost, url, body)
 	if err != nil {
 		return "", err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Authorization", "Bearer "+appJWT)
 	req.Header.Set("Accept", "application/vnd.github+json")

@@ -448,7 +448,7 @@ func (s *Server) handleFleetDesiredState(w http.ResponseWriter, r *http.Request)
 	// pull private images. The rendered Deployments already reference
 	// "bordo-registry-creds" for ghcr.io images; here we create that Secret.
 	if owner := firstGHCROwner(manifests); owner != "" {
-		if tok, _, terr := s.githubHandler.GetInstallationTokenFromStore(r.Context()); terr == nil && tok != "" {
+		if tok, terr := s.githubHandler.GetScopedPullToken(r.Context()); terr == nil && tok != "" {
 			if secret, serr := fleet.RenderImagePullSecret("bordo-apps", "ghcr.io", owner, tok); serr == nil {
 				manifests = secret + "---\n" + manifests
 			}

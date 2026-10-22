@@ -41,6 +41,25 @@ func (h *Handler) Routes() http.Handler {
 
 // GetInstallationTokenFromStore generates a fresh installation token using stored credentials.
 // Used by the server to expose /v1/github/token.
+// GetScopedPullToken returns a credential for pulling private images. On the
+// GitHub App path it mints a short-lived token scoped to packages:read (least
+// privilege, ADR-0006 Phase 3). On the device-flow/OAuth user-token path GitHub
+// provides no way to narrow the token, so the stored user token is returned as
+// the best available option.
+func (h *Handler) GetScopedPullToken(ctx context.Context) (string, error) {
+	if creds, err := h.store.LoadApp(ctx); err == nil && creds != nil {
+		if installID, _, _, err := h.store.LoadInstallationID(ctx); err == nil && installID != 0 {
+			if jwt, err := GenerateJWT(creds.AppID, creds.PrivateKeyPEM); err == nil {
+				if tok, err := GetScopedInstallationToken(jwt, installID, map[string]string{"packages": "read"}); err == nil && tok != "" {
+					return tok, nil
+				}
+			}
+		}
+	}
+	userToken, _, err := h.store.LoadUserToken(ctx)
+	return userToken, err
+}
+
 func (h *Handler) GetInstallationTokenFromStore(ctx context.Context) (string, string, error) {
 	// Prefer a user token (device-flow / PAT): it works without a GitHub App,
 	// which is the standard self-hosted path. Only fall through to the App
