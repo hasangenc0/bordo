@@ -49,6 +49,7 @@ services:
       - "${CONSOLE_PORT:-3000}:80"
     environment:
       - BORDO_AGENT_TOKEN=${BORDO_INTERNAL_TOKEN}
+      - BORDO_CONSOLE_PASSWORD=${BORDO_CONSOLE_PASSWORD:?run 'bordo platform up' to generate one, or set it in .env}
     mem_limit: 64m
     memswap_limit: 64m
     depends_on:

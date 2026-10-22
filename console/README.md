@@ -27,7 +27,16 @@ Charts query VictoriaMetrics through the control plane (`/v1/observe/metrics`). 
 - **frontend/**: Vite + React + TypeScript SPA (port 5173 in dev).
 - **bff/**: Express dev proxy (port 3001). Forwards `/api/*` to the agent and relays the chat WebSocket. In production, nginx (`deploy/bordo/nginx-console.conf.template`) does this job and injects the agent token.
 
-All control-plane calls go `browser → /api/v1/* → agent → control plane`. The console has no login of its own: anyone who can reach it can use the agent, including pushing code and deploying. Keep it on a private network or behind your own auth.
+All control-plane calls go `browser → /api/v1/* → agent → control plane`.
+
+### Access control
+
+The production console sits behind an nginx login (HTTP Basic, username `bordo`). nginx adds the agent token to upstream requests, so this login is what keeps other people out; the container refuses to start without `BORDO_CONSOLE_PASSWORD` (12+ characters).
+
+- `bordo platform install` generates a random password into `~/.bordo/deploy/.env`. `bordo platform up` adds one to older installs and prints it.
+- Show it any time with `bordo platform password`. Change it by editing `.env` and running `bordo platform restart`.
+- Basic auth sends the password with every request, so on plain `http://` it is readable by anyone on the network path. Put the console behind HTTPS (a reverse proxy or Cloudflare Tunnel), or only reach it through a VPN or `ssh -L 3000:localhost:3000`.
+- Ports 7401 (control plane) and 7402 (agent) are also published and are protected by the internal token, not this login. Firewall them if you don't need them reachable.
 
 ## Develop
 

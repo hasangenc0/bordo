@@ -7,7 +7,7 @@ RUN npm run build
 
 # Runtime — pure nginx:alpine (~25 MB image, no Node.js)
 FROM nginx:1.27-alpine
-RUN apk add --no-cache gettext  # provides envsubst
+RUN apk add --no-cache gettext openssl  # envsubst; openssl hashes the console password
 
 COPY --from=frontend-build /app/dist /usr/share/nginx/html
 COPY deploy/bordo/nginx-console.conf.template /etc/nginx/templates/default.conf.template
