@@ -8,6 +8,7 @@ import { PageHeader } from '../components/PageHeader'
 import { StatusBadge } from '../components/StatusBadge'
 import { useFetch } from '../hooks/useFetch'
 import type { Project } from '../types'
+import { Box } from 'lucide-react'
 
 export function AppsPage() {
   const navigate = useNavigate()
@@ -38,7 +39,7 @@ export function AppsPage() {
             {!apps.loading && list.length === 0 && (
               <tr>
                 <td colSpan={6}>
-                  <EmptyState icon="○" title="No apps yet" hint="Create one here, or ask the agent: “create a java web service called hello-api”" />
+                  <EmptyState icon={<Box size={26} strokeWidth={1.5} aria-hidden="true" />} title="No apps yet" hint="Create one here, or ask the agent: “create a java web service called hello-api”" />
                 </td>
               </tr>
             )}

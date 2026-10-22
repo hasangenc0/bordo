@@ -3,6 +3,7 @@ import type { ToolActivity } from '../types'
 import { CopyButton } from './CopyButton'
 import { DiffView } from './DiffView'
 import { StatusBadge } from './StatusBadge'
+import { Check, ChevronDown, ChevronRight, ExternalLink, X } from 'lucide-react'
 
 type Rec = Record<string, unknown>
 const isRec = (v: unknown): v is Rec => typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -87,7 +88,7 @@ function Rich({ t }: { t: ToolActivity }): ReactNode {
           rows={[
             ['Branch', <code key="b">{s(d.branch)}</code>],
             ['Commit', <code key="c">{s(d.commit).slice(0, 8)}</code>],
-            ['Compare', d.compare_url ? <a key="u" href={s(d.compare_url)} target="_blank" rel="noreferrer noopener">View on GitHub ↗</a> : ''],
+            ['Compare', d.compare_url ? <a key="u" href={s(d.compare_url)} target="_blank" rel="noreferrer noopener">View on GitHub <ExternalLink size={12} className="icon-inline" aria-hidden="true" /></a> : ''],
           ]}
         />
       )
@@ -95,7 +96,7 @@ function Rich({ t }: { t: ToolActivity }): ReactNode {
       return (
         <Rows
           rows={[
-            ['Pull request', d.url ? <a key="u" href={s(d.url)} target="_blank" rel="noreferrer noopener">#{s(d.number)} on GitHub ↗</a> : ''],
+            ['Pull request', d.url ? <a key="u" href={s(d.url)} target="_blank" rel="noreferrer noopener">#{s(d.number)} on GitHub <ExternalLink size={12} className="icon-inline" aria-hidden="true" /></a> : ''],
           ]}
         />
       )
@@ -149,10 +150,10 @@ export function ToolCard({ tool }: { tool: ToolActivity }) {
     <div className={`tool-activity tool-activity--${tool.status}`}>
       <button type="button" className="tool-activity-head" onClick={() => hasDetail && setOpen((o) => !o)} aria-expanded={open}>
         {tool.status === 'running' ? <span className="spinner" aria-label="running" /> : (
-          <span className="tool-activity-icon">{tool.status === 'error' ? '✕' : '✓'}</span>
+          <span className="tool-activity-icon">{tool.status === 'error' ? <X size={13} aria-label="failed" /> : <Check size={13} aria-label="done" />}</span>
         )}
         <span className="tool-activity-title">{title(tool)}</span>
-        {hasDetail && <span className="tool-activity-caret">{open ? '▾' : '▸'}</span>}
+        {hasDetail && <span className="tool-activity-caret">{open ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}</span>}
       </button>
       {tool.status === 'error' && tool.error && <div className="tool-activity-error">{tool.error}</div>}
       {showRich && <div className="tool-activity-rich"><Rich t={tool} /></div>}

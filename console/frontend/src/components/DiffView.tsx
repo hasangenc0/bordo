@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { ChevronDown, ChevronRight } from 'lucide-react'
 
 interface FileDiff {
   path: string
@@ -34,7 +35,7 @@ function FileBlock({ file, startOpen }: { file: FileDiff; startOpen: boolean }) 
   return (
     <div className="diff-file">
       <button type="button" className="diff-file-head" onClick={() => setOpen((o) => !o)}>
-        <span className="diff-caret">{open ? '▾' : '▸'}</span>
+        <span className="diff-caret">{open ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}</span>
         <span className="diff-path">{file.path}</span>
         <span className="diff-add">+{file.added}</span>
         <span className="diff-del">−{file.removed}</span>

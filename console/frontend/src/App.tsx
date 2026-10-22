@@ -13,6 +13,7 @@ import { ChatPage } from './pages/ChatPage'
 import { ObservePage } from './pages/ObservePage'
 import { RegionsPage } from './pages/RegionsPage'
 import './styles.css'
+import { Circle, Sparkles, X } from 'lucide-react'
 
 const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
 const AGENT_WS_URL =
@@ -207,13 +208,13 @@ function Shell() {
           </div>
 
           {!onHome && !dockOpen && (
-            <button className="dock-fab" onClick={toggleDock}>✦ Ask Bordo</button>
+            <button className="dock-fab" onClick={toggleDock}><Sparkles size={15} aria-hidden="true" /> Ask Bordo</button>
           )}
 
           {showDock && (
             <div className="dock">
               <div className="dock-head">
-                <span className="dock-title">✦ Bordo</span>
+                <span className="dock-title"><Sparkles size={14} aria-hidden="true" /> Bordo</span>
                 <select
                   className="select dock-select"
                   value={activeChatId ?? ''}
@@ -225,9 +226,9 @@ function Shell() {
                 </select>
                 <button className="btn btn-secondary btn-sm" onClick={() => selectChat(null)} title="Start a new conversation">New</button>
                 <button className="btn btn-secondary btn-sm" onClick={() => setShowActivity((v) => !v)}>
-                  Activity{actionEvents.some((e) => e.status === 'pending') && <span style={{ color: 'var(--status-warning)' }}> ●</span>}
+                  Activity{actionEvents.some((e) => e.status === 'pending') && <Circle size={8} fill="currentColor" style={{ color: 'var(--status-warning)', marginLeft: 4 }} aria-label="pending" />}
                 </button>
-                <button className="btn btn-secondary btn-sm" onClick={toggleDock} aria-label="Hide chat">✕</button>
+                <button className="btn btn-secondary btn-sm" onClick={toggleDock} aria-label="Hide chat"><X size={14} aria-hidden="true" /></button>
               </div>
               <ChatPane
                 variant="dock"

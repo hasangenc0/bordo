@@ -1264,3 +1264,9 @@ td.ellipsis { max-width: 280px; display: table-cell; }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
 .md-fence--wrap pre { white-space: pre-wrap; word-break: break-all; }
 .notice code { font-family: var(--mono); font-size: 12px; }
+
+/* icons (lucide) */
+.icon-inline { vertical-align: -1px; margin-left: 2px; }
+.sidebar-icon, .tool-activity-icon, .tool-activity-caret, .diff-caret, .chat-empty-icon, .empty-state-icon, .modal-close, .chat-list-del { display: inline-flex; align-items: center; justify-content: center; }
+.dock-title, .dock-fab, .activity-item-header, .rail-link { display: inline-flex; align-items: center; gap: 6px; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 4px; }

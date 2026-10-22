@@ -7,6 +7,7 @@ import { PageHeader } from '../components/PageHeader'
 import { StatusBadge } from '../components/StatusBadge'
 import { useFetch } from '../hooks/useFetch'
 import type { NodeHealth, Project, Region } from '../types'
+import { Globe } from 'lucide-react'
 
 interface FleetDeployment { project_id: string; image_tag: string; status: string; region: string }
 interface FleetRegion { name: string; status: string; deployments: FleetDeployment[] }
@@ -55,7 +56,7 @@ export function RegionsPage() {
 
       {!res.loading && views.length === 0 && !res.error && (
         <div className="card">
-          <EmptyState icon="◎" title="No regions yet" hint="Add a region to get a place to deploy your apps." />
+          <EmptyState icon={<Globe size={26} strokeWidth={1.5} aria-hidden="true" />} title="No regions yet" hint="Add a region to get a place to deploy your apps." />
         </div>
       )}
 

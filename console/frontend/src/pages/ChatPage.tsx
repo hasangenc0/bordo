@@ -4,6 +4,7 @@ import { ChatPane } from '../components/ChatPane'
 import { StatusBadge } from '../components/StatusBadge'
 import { useFetch } from '../hooks/useFetch'
 import type { ChatSession, Message, Project } from '../types'
+import { ArrowRight, X } from 'lucide-react'
 
 interface Props {
   chats: ChatSession[]
@@ -32,7 +33,7 @@ function FleetRail() {
             <StatusBadge status={p.release_status || 'unknown'} size="sm" />
           </NavLink>
         ))}
-        <NavLink to="/apps" className="rail-link">All apps →</NavLink>
+        <NavLink to="/apps" className="rail-link">All apps <ArrowRight size={12} className="icon-inline" aria-hidden="true" /></NavLink>
       </div>
       <div className="rail-section">
         <div className="rail-title">Regions</div>
@@ -43,7 +44,7 @@ function FleetRail() {
             <StatusBadge status={r.status} size="sm" />
           </div>
         ))}
-        <NavLink to="/regions" className="rail-link">Manage regions →</NavLink>
+        <NavLink to="/regions" className="rail-link">Manage regions <ArrowRight size={12} className="icon-inline" aria-hidden="true" /></NavLink>
       </div>
     </aside>
   )
@@ -68,7 +69,7 @@ export function ChatPage({ chats, activeChatId, onSelect, onNew, onDelete, messa
                 aria-label={`Delete ${c.title}`}
                 onClick={() => { if (window.confirm('Delete this conversation?')) onDelete(c.id) }}
               >
-                ✕
+                <X size={12} aria-hidden="true" />
               </button>
             </div>
           ))}

@@ -1,4 +1,5 @@
 import type { ActionEvent } from '../types'
+import { ArrowRight, Circle, Hammer, Rocket, RotateCw, Trash2, Undo2, X, type LucideIcon } from 'lucide-react'
 import { StatusBadge } from './StatusBadge'
 
 interface Props {
@@ -16,12 +17,12 @@ function relativeTime(ts: number): string {
   return `${Math.floor(diff / 86400)}d ago`
 }
 
-const KIND_ICONS: Record<string, string> = {
-  deploy: '↑',
-  delete: '✕',
-  restart: '↺',
-  build: '⚙',
-  rollback: '↩',
+const KIND_ICONS: Record<string, LucideIcon> = {
+  deploy: Rocket,
+  delete: Trash2,
+  restart: RotateCw,
+  build: Hammer,
+  rollback: Undo2,
 }
 
 export function ActivityPanel({ events, onApprove, onReject, onClose }: Props) {
@@ -29,7 +30,7 @@ export function ActivityPanel({ events, onApprove, onReject, onClose }: Props) {
     <aside className="activity-panel">
       <div className="activity-panel-header">
         <span>Activity</span>
-        <button className="activity-toggle" onClick={onClose} style={{ padding: '2px 8px', fontSize: '12px' }}>✕</button>
+        <button className="activity-toggle" onClick={onClose} style={{ padding: '2px 8px', fontSize: '12px' }} aria-label="Close"><X size={13} aria-hidden="true" /></button>
       </div>
       <div className="activity-panel-list">
         {events.length === 0 && (
@@ -41,7 +42,7 @@ export function ActivityPanel({ events, onApprove, onReject, onClose }: Props) {
           <div key={ev.id} className="activity-item">
             <div className="activity-item-header">
               <span className="activity-item-kind">
-                {KIND_ICONS[ev.kind] ?? '●'} {ev.kind} {ev.target}
+                {(() => { const Icon = KIND_ICONS[ev.kind] ?? Circle; return <Icon size={13} aria-hidden="true" /> })()} {ev.kind} {ev.target}
               </span>
               <StatusBadge status={ev.status} size="sm" />
             </div>
@@ -54,7 +55,7 @@ export function ActivityPanel({ events, onApprove, onReject, onClose }: Props) {
                   rel="noopener noreferrer"
                   style={{ marginLeft: '8px', color: 'var(--text)', textDecoration: 'none' }}
                 >
-                  View logs →
+                  View logs <ArrowRight size={12} className="icon-inline" aria-hidden="true" />
                 </a>
               )}
             </div>
