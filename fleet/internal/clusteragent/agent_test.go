@@ -202,3 +202,21 @@ func TestReconcileOnceReportsObservation(t *testing.T) {
 		t.Fatalf("report = %+v", got)
 	}
 }
+
+func TestPublicIPDetection(t *testing.T) {
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("<html>nope")) }))
+	defer bad.Close()
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("203.0.113.9\n")) }))
+	defer good.Close()
+
+	a := New(Config{CPURL: "http://cp", ClusterToken: "t", DetectPublicIP: true})
+	a.ipURLs = []string{bad.URL, good.URL}
+	if got := a.publicIP(context.Background()); got != "203.0.113.9" {
+		t.Fatalf("publicIP = %q", got)
+	}
+	off := New(Config{CPURL: "http://cp", ClusterToken: "t"})
+	off.ipURLs = []string{good.URL}
+	if got := off.publicIP(context.Background()); got != "" {
+		t.Fatalf("detection off but got %q", got)
+	}
+}

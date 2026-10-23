@@ -526,6 +526,7 @@ func (s *Server) handleFleetStatus(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		AppliedReleaseIDs []string `json:"applied_release_ids"`
 		Error             string   `json:"error"`
+		PublicIP          string   `json:"public_ip"`
 		Observed          *struct {
 			Services []observedSvc `json:"services"`
 			Pods     []observedPod `json:"pods"`
@@ -548,6 +549,9 @@ func (s *Server) handleFleetStatus(w http.ResponseWriter, r *http.Request) {
 		_ = s.db.QueryRowContext(r.Context(), `SELECT public_host FROM regions WHERE name = ?`, region).Scan(&configured)
 		if configured != "" {
 			rep.HostAddr = configured
+		} else if publicAddr(req.PublicIP) {
+			// Detected by the reconciler on the machine itself, so it sees the real public address.
+			rep.HostAddr = req.PublicIP
 		} else if host, _, herr := net.SplitHostPort(r.RemoteAddr); herr == nil && publicAddr(host) {
 			rep.HostAddr = host
 		}

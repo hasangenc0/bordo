@@ -12,6 +12,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -32,6 +34,9 @@ type Config struct {
 	ClusterToken string        // BORDO_CLUSTER_TOKEN — region-scoped reconciler credential
 	Interval     time.Duration // BORDO_RECONCILE_INTERVAL seconds (default 30)
 	Namespace    string        // BORDO_APPS_NAMESPACE (default bordo-apps)
+	// DetectPublicIP (BORDO_DETECT_PUBLIC_IP, default on) lets the reconciler ask an IP-echo
+	// service for the machine's public address so the control plane can build NodePort URLs.
+	DetectPublicIP bool
 }
 
 // ConfigFromEnv builds and validates a Config from environment variables.
@@ -41,6 +46,8 @@ func ConfigFromEnv() (Config, error) {
 		ClusterToken: os.Getenv("BORDO_CLUSTER_TOKEN"),
 		Interval:     defaultInterval,
 		Namespace:    defaultNamespace,
+
+		DetectPublicIP: !strings.EqualFold(os.Getenv("BORDO_DETECT_PUBLIC_IP"), "false"),
 	}
 	if v := os.Getenv("BORDO_RECONCILE_INTERVAL"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -98,6 +105,49 @@ type Agent struct {
 	httpc   *http.Client
 	apply   Applier
 	observe Observer
+
+	ipURLs    []string
+	ipCached  string
+	ipChecked time.Time
+}
+
+// publicIPServices are queried in order; each returns the caller's address as plain text.
+var publicIPServices = []string{"https://api.ipify.org", "https://ifconfig.me/ip"}
+
+const publicIPRefresh = time.Hour
+
+// publicIP returns the machine's public address as seen from outside, cached for an hour.
+// Pod egress leaves through the host's network, so an IP-echo service reports the machine's
+// address. Returns "" when detection is off or fails; it is only a convenience.
+func (a *Agent) publicIP(ctx context.Context) string {
+	if !a.cfg.DetectPublicIP {
+		return ""
+	}
+	if a.ipCached != "" && time.Since(a.ipChecked) < publicIPRefresh {
+		return a.ipCached
+	}
+	if a.ipCached == "" && !a.ipChecked.IsZero() && time.Since(a.ipChecked) < 5*time.Minute {
+		return "" // recently failed; don't hammer the echo services
+	}
+	a.ipChecked = time.Now()
+	for _, u := range a.ipURLs {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		if err != nil {
+			continue
+		}
+		resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+		if err != nil {
+			continue
+		}
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 64))
+		resp.Body.Close()
+		ip := strings.TrimSpace(string(b))
+		if resp.StatusCode == http.StatusOK && net.ParseIP(ip) != nil {
+			a.ipCached = ip
+			return ip
+		}
+	}
+	return a.ipCached
 }
 
 // New builds an Agent that applies via kubectl using the pod's in-cluster RBAC.
@@ -107,6 +157,7 @@ func New(cfg Config) *Agent {
 		httpc:   &http.Client{Timeout: 30 * time.Second},
 		apply:   kubectlApply,
 		observe: kubectlObserve,
+		ipURLs:  publicIPServices,
 	}
 }
 
@@ -148,12 +199,13 @@ func (a *Agent) fetchDesiredState(ctx context.Context) (string, []string, error)
 // reportStatus tells the control plane which releases this cycle applied, so it
 // can advance them from reconciling to deployed (or failed). Best-effort: a
 // reporting hiccup must not stop the reconcile loop, so errors are only logged.
-func (a *Agent) reportStatus(ctx context.Context, releaseIDs []string, applyErr error, obs *Observation) {
+func (a *Agent) reportStatus(ctx context.Context, releaseIDs []string, applyErr error, obs *Observation, publicIP string) {
 	body := struct {
 		AppliedReleaseIDs []string     `json:"applied_release_ids"`
 		Error             string       `json:"error"`
 		Observed          *Observation `json:"observed,omitempty"`
-	}{AppliedReleaseIDs: releaseIDs, Observed: obs}
+		PublicIP          string       `json:"public_ip,omitempty"`
+	}{AppliedReleaseIDs: releaseIDs, Observed: obs, PublicIP: publicIP}
 	if applyErr != nil {
 		body.Error = applyErr.Error()
 	}
@@ -195,7 +247,7 @@ func (a *Agent) ReconcileOnce(ctx context.Context) error {
 		}
 	}
 	if len(releaseIDs) > 0 || obs != nil {
-		a.reportStatus(ctx, releaseIDs, applyErr, obs)
+		a.reportStatus(ctx, releaseIDs, applyErr, obs, a.publicIP(ctx))
 	}
 	return applyErr
 }
