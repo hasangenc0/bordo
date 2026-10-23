@@ -31,22 +31,16 @@ You need one thing: a Linux server you can SSH into (a $5/mo VPS is plenty) with
 curl -fsSL https://raw.githubusercontent.com/hasangenc0/bordo/master/install-cli.sh | sh
 ```
 
-**2. Start Bordo:**
+**2. Run setup:**
 ```bash
-bordo platform install      # downloads and configures everything
-bordo platform up           # starts it
+bordo setup
 ```
+It installs and starts Bordo, reads the setup token for you, asks for your DeepSeek API key, then prints a short code. Enter that code at the link, from any browser, to connect GitHub so Bordo can build your code.
 
-**3. Set it up** (one-time; you'll paste a code it prints and a DeepSeek API key for the AI):
-```bash
-bordo platform token        # prints a setup code
-bordo setup                 # follow the prompts
-```
+Want it in one line? `curl ... | BORDO_SETUP=1 sh` runs setup right after installing.
+Scripting it? `DEEPSEEK_API_KEY=... bordo setup --skip-github` asks nothing. Add `--advanced` to also set the public URL, LLM model and registry.
 
-**4. Connect GitHub** (so Bordo can build your code). It prints a short code. Enter it at the link, from any browser:
-```bash
-bordo github login
-```
+Prefer the steps one at a time? They still work: `bordo platform install`, `bordo platform up`, `bordo platform token`, `bordo setup`, `bordo github login`.
 
 That's it. Bordo is running.
 

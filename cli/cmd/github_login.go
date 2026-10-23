@@ -37,49 +37,56 @@ browser (your laptop or phone) — nothing opens on the server, no tunnel or
 base_url needed. Bordo then uses your token to create repos, run builds in
 GitHub Actions, and pull private images.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cid := clientID
-			if cid == "" {
-				cid = os.Getenv("BORDO_GITHUB_CLIENT_ID")
-			}
-			if cid == "" {
-				cid = defaultGitHubClientID
-			}
-			if cid == "" {
-				return fmt.Errorf("no GitHub OAuth App client id configured.\n" +
-					"Register a public OAuth App (GitHub > Settings > Developer settings > OAuth Apps)\n" +
-					"with \"Enable Device Flow\" turned on, then set its client id:\n" +
-					"  export BORDO_GITHUB_CLIENT_ID=<client_id>\n" +
-					"or pass --client-id. Alternatively paste a token directly: bordo github connect")
-			}
-
-			da, err := startDeviceFlow(cid, githubScopes)
-			if err != nil {
-				return err
-			}
-
-			fmt.Printf("\nConnect GitHub:\n  1. Open %s\n  2. Enter the code:  %s\n\nWaiting for authorization (Ctrl-C to cancel)...\n",
-				da.VerificationURI, da.UserCode)
-
-			expiry := da.ExpiresIn
-			if expiry <= 0 {
-				expiry = 900
-			}
-			ctx, cancel := context.WithTimeout(cmd.Context(), time.Duration(expiry)*time.Second)
-			defer cancel()
-
-			token, err := pollDeviceToken(ctx, cid, da.DeviceCode, da.Interval)
-			if err != nil {
-				return err
-			}
-			if err := storeGithubToken(token); err != nil {
-				return fmt.Errorf("saving token to server: %w", err)
-			}
-			fmt.Println("\n✓ GitHub connected. Builds will now run in GitHub Actions.")
-			return nil
+			return runGithubLogin(cmd.Context(), clientID)
 		},
 	}
 	cmd.Flags().StringVar(&clientID, "client-id", "", "GitHub OAuth App client id (or set BORDO_GITHUB_CLIENT_ID)")
 	return cmd
+}
+
+// runGithubLogin runs GitHub's device flow and stores the resulting token on
+// the Bordo server. An empty clientID falls back to BORDO_GITHUB_CLIENT_ID and
+// then the baked-in default.
+func runGithubLogin(ctx context.Context, clientID string) error {
+	cid := clientID
+	if cid == "" {
+		cid = os.Getenv("BORDO_GITHUB_CLIENT_ID")
+	}
+	if cid == "" {
+		cid = defaultGitHubClientID
+	}
+	if cid == "" {
+		return fmt.Errorf("no GitHub OAuth App client id configured.\n" +
+			"Register a public OAuth App (GitHub > Settings > Developer settings > OAuth Apps)\n" +
+			"with \"Enable Device Flow\" turned on, then set its client id:\n" +
+			"  export BORDO_GITHUB_CLIENT_ID=<client_id>\n" +
+			"or pass --client-id. Alternatively paste a token directly: bordo github connect")
+	}
+
+	da, err := startDeviceFlow(cid, githubScopes)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("\nConnect GitHub:\n  1. Open %s\n  2. Enter the code:  %s\n\nWaiting for authorization (Ctrl-C to cancel)...\n",
+		da.VerificationURI, da.UserCode)
+
+	expiry := da.ExpiresIn
+	if expiry <= 0 {
+		expiry = 900
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(expiry)*time.Second)
+	defer cancel()
+
+	token, err := pollDeviceToken(ctx, cid, da.DeviceCode, da.Interval)
+	if err != nil {
+		return err
+	}
+	if err := storeGithubToken(token); err != nil {
+		return fmt.Errorf("saving token to server: %w", err)
+	}
+	fmt.Println("\n✓ GitHub connected. Builds will now run in GitHub Actions.")
+	return nil
 }
 
 // githubConnectCmd is the fallback: paste a Personal Access Token directly.

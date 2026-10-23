@@ -29,6 +29,24 @@ or build from source with `make build` (produces `./bin/bordo`).
 
 ---
 
+## Shortcut: one command
+
+On the server, `bordo setup` does everything in the next three sections: it
+installs and starts the platform if needed, reads the setup token, asks for your
+DeepSeek API key, and offers to connect GitHub at the end.
+
+```bash
+bordo setup
+```
+
+Flags: `--deepseek-key` (or `DEEPSEEK_API_KEY`), `--setup-token` (or
+`BORDO_SETUP_TOKEN`), `--skip-github`, and `--advanced` to also set the public
+URL, LLM model/endpoint and registry. `curl ... install-cli.sh | BORDO_SETUP=1 sh`
+runs it straight after installing. The steps below are the same flow, one at a
+time.
+
+---
+
 ## Bring up the platform
 
 ```bash

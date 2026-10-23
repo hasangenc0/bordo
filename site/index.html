@@ -74,12 +74,8 @@ footer a{color:inherit}
 <h2 id="install">Install</h2>
 <p>You need a Linux server you can SSH into, with Docker installed.</p>
 <pre>curl -fsSL https://raw.githubusercontent.com/hasangenc0/bordo/master/install-cli.sh | sh
-
-bordo platform install
-bordo platform up
-bordo platform token     <span class="dim"># prints a setup code</span>
-bordo setup              <span class="dim"># asks for the code and a DeepSeek API key</span>
-bordo github login       <span class="dim"># enter the short code it prints at the link</span></pre>
+bordo setup</pre>
+<p><code>bordo setup</code> installs and starts Bordo, reads the setup token for you, asks for a DeepSeek API key, then shows a short code to enter at GitHub. Prefix the install with <code>BORDO_SETUP=1</code> to run setup right after it, or pass <code>--deepseek-key</code> and <code>--skip-github</code> to script it.</p>
 <p>Then ship something:</p>
 <pre>bordo agent chat
 <span class="dim">›</span> create a java web service called hello-api and build it

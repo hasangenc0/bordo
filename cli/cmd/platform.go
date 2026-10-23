@@ -35,10 +35,15 @@ func PlatformCmd() *cobra.Command {
 Docker is the runtime under the hood, but you never type a docker command.
 Typical flow:
 
+  bordo setup               # does everything below, then connects GitHub
+  bordo platform status     # check health
+
+Or step by step:
+
   bordo platform install    # write config + pull images
   bordo platform up         # start everything
-  bordo setup               # first-run configuration
-  bordo platform status     # check health`,
+  bordo platform token      # print the one-time setup token
+  bordo setup               # first-run configuration`,
 	}
 	cmd.AddCommand(
 		platformInstallCmd(),
@@ -60,74 +65,83 @@ func platformInstallCmd() *cobra.Command {
 		Use:   "install",
 		Short: "Write platform config to ~/.bordo/deploy and pull images",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if _, err := exec.LookPath("docker"); err != nil {
-				return fmt.Errorf("Docker is not installed. Install it first: https://docs.docker.com/engine/install/")
-			}
-
-			if desc, conflict := conflictingStack(); conflict {
-				fmt.Printf("Warning: another Bordo stack appears to be running: %s.\n"+
-					"It would clash on ports 7401/7402/3000, so 'bordo platform up' will\n"+
-					"refuse to start until that stack is stopped (or run 'up --force').\n\n", desc)
-			}
-
-			dir := platformDir()
-			if err := os.MkdirAll(dir, 0o700); err != nil {
-				return fmt.Errorf("creating %s: %w", dir, err)
-			}
-
-			composePath := filepath.Join(dir, "docker-compose.yml")
-			if err := os.WriteFile(composePath, composeYAML, 0o644); err != nil {
-				return fmt.Errorf("writing compose file: %w", err)
-			}
-			fmt.Printf("Wrote %s\n", composePath)
-
-			envPath := filepath.Join(dir, ".env")
-			if _, err := os.Stat(envPath); os.IsNotExist(err) || force {
-				token, err := randomToken()
-				if err != nil {
-					return err
-				}
-				consolePW, err := randomToken()
-				if err != nil {
-					return err
-				}
-				env := fmt.Sprintf(
-					"# Bordo platform config — edit ports here; keep the secrets secret.\n"+
-						"BORDO_INTERNAL_TOKEN=%s\n"+
-						"# Login for the web console (username: bordo).\n"+
-						"BORDO_CONSOLE_PASSWORD=%s\n"+
-						"BORDOD_PORT=7401\n"+
-						"AGENT_PORT=7402\n"+
-						"CONSOLE_PORT=3000\n",
-					token, consolePW,
-				)
-				if err := os.WriteFile(envPath, []byte(env), 0o600); err != nil {
-					return fmt.Errorf("writing .env: %w", err)
-				}
-				fmt.Printf("Generated %s (internal token, console password, ports)\n", envPath)
-			} else {
-				fmt.Printf("Kept existing %s\n", envPath)
-			}
-
-			// Sync the internal token into the CLI config so 'bordo agent chat'
-			// can authenticate to the agent directly.
-			if tok := readEnvValue(envPath, "BORDO_INTERNAL_TOKEN"); tok != "" {
-				if err := config.Set("agent_token", tok); err != nil {
-					fmt.Printf("Warning: could not save agent token to CLI config: %v\n", err)
-				}
-			}
-
-			fmt.Println("Pulling images...")
-			if err := compose("pull").Run(); err != nil {
-				return fmt.Errorf("docker compose pull: %w", err)
-			}
-
-			fmt.Println("\nInstalled. Start with:  bordo platform up")
-			return nil
+			return runPlatformInstall(force, false)
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "regenerate .env even if it exists (rotates the internal token)")
 	return cmd
+}
+
+// runPlatformInstall writes the compose file and .env and pulls images. quiet
+// suppresses the "start with" hint for callers (like `bordo setup`) that go on
+// to start the platform themselves.
+func runPlatformInstall(force, quiet bool) error {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return fmt.Errorf("Docker is not installed. Install it first: https://docs.docker.com/engine/install/")
+	}
+
+	if desc, conflict := conflictingStack(); conflict {
+		fmt.Printf("Warning: another Bordo stack appears to be running: %s.\n"+
+			"It would clash on ports 7401/7402/3000, so 'bordo platform up' will\n"+
+			"refuse to start until that stack is stopped (or run 'up --force').\n\n", desc)
+	}
+
+	dir := platformDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("creating %s: %w", dir, err)
+	}
+
+	composePath := filepath.Join(dir, "docker-compose.yml")
+	if err := os.WriteFile(composePath, composeYAML, 0o644); err != nil {
+		return fmt.Errorf("writing compose file: %w", err)
+	}
+	fmt.Printf("Wrote %s\n", composePath)
+
+	envPath := filepath.Join(dir, ".env")
+	if _, err := os.Stat(envPath); os.IsNotExist(err) || force {
+		token, err := randomToken()
+		if err != nil {
+			return err
+		}
+		consolePW, err := randomToken()
+		if err != nil {
+			return err
+		}
+		env := fmt.Sprintf(
+			"# Bordo platform config — edit ports here; keep the secrets secret.\n"+
+				"BORDO_INTERNAL_TOKEN=%s\n"+
+				"# Login for the web console (username: bordo).\n"+
+				"BORDO_CONSOLE_PASSWORD=%s\n"+
+				"BORDOD_PORT=7401\n"+
+				"AGENT_PORT=7402\n"+
+				"CONSOLE_PORT=3000\n",
+			token, consolePW,
+		)
+		if err := os.WriteFile(envPath, []byte(env), 0o600); err != nil {
+			return fmt.Errorf("writing .env: %w", err)
+		}
+		fmt.Printf("Generated %s (internal token, console password, ports)\n", envPath)
+	} else {
+		fmt.Printf("Kept existing %s\n", envPath)
+	}
+
+	// Sync the internal token into the CLI config so 'bordo agent chat'
+	// can authenticate to the agent directly.
+	if tok := readEnvValue(envPath, "BORDO_INTERNAL_TOKEN"); tok != "" {
+		if err := config.Set("agent_token", tok); err != nil {
+			fmt.Printf("Warning: could not save agent token to CLI config: %v\n", err)
+		}
+	}
+
+	fmt.Println("Pulling images...")
+	if err := compose("pull").Run(); err != nil {
+		return fmt.Errorf("docker compose pull: %w", err)
+	}
+
+	if !quiet {
+		fmt.Println("\nInstalled. Start with:  bordo platform up")
+	}
+	return nil
 }
 
 func platformUpCmd() *cobra.Command {
@@ -136,37 +150,45 @@ func platformUpCmd() *cobra.Command {
 		Use:   "up",
 		Short: "Start all Bordo services in the background",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := ensureInstalled(); err != nil {
-				return err
-			}
-			if !force {
-				if desc, conflict := conflictingStack(); conflict {
-					return fmt.Errorf("Another Bordo stack appears to be running: %s.\n"+
-						"Starting a second stack will clash on ports 7401/7402/3000.\n"+
-						"Stop the other stack first (e.g. 'cd /opt/bordo/deploy/bordo && docker compose down'), or manage that one instead.\n"+
-						"To start anyway, re-run with --force.", desc)
-				}
-			}
-			// Installs from before the console login existed have no password yet.
-			pw, created, err := ensureConsolePassword(filepath.Join(platformDir(), ".env"))
-			if err != nil {
-				return err
-			}
-			if err := compose("up", "-d", "--remove-orphans").Run(); err != nil {
-				return fmt.Errorf("docker compose up: %w", err)
-			}
-			if created {
-				fmt.Printf("\nThe web console now requires a login. Username: bordo   Password: %s\n", pw)
-				fmt.Println("(stored in " + filepath.Join(platformDir(), ".env") + "; show it again with 'bordo platform password')")
-			}
-			fmt.Println("\nBordo is up. Next:")
-			fmt.Println("  bordo platform token    # get the setup token")
-			fmt.Println("  bordo setup             # configure (no flags needed on the server)")
-			return nil
+			return runPlatformUp(force, false)
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "start even if another Bordo stack is detected (advanced)")
 	return cmd
+}
+
+// runPlatformUp starts the compose stack. quiet suppresses the "Next:" hints
+// for callers (like `bordo setup`) that continue the flow themselves.
+func runPlatformUp(force, quiet bool) error {
+	if err := ensureInstalled(); err != nil {
+		return err
+	}
+	if !force {
+		if desc, conflict := conflictingStack(); conflict {
+			return fmt.Errorf("Another Bordo stack appears to be running: %s.\n"+
+				"Starting a second stack will clash on ports 7401/7402/3000.\n"+
+				"Stop the other stack first (e.g. 'cd /opt/bordo/deploy/bordo && docker compose down'), or manage that one instead.\n"+
+				"To start anyway, re-run with --force.", desc)
+		}
+	}
+	// Installs from before the console login existed have no password yet.
+	pw, created, err := ensureConsolePassword(filepath.Join(platformDir(), ".env"))
+	if err != nil {
+		return err
+	}
+	if err := compose("up", "-d", "--remove-orphans").Run(); err != nil {
+		return fmt.Errorf("docker compose up: %w", err)
+	}
+	if created {
+		fmt.Printf("\nThe web console now requires a login. Username: bordo   Password: %s\n", pw)
+		fmt.Println("(stored in " + filepath.Join(platformDir(), ".env") + "; show it again with 'bordo platform password')")
+	}
+	if !quiet {
+		fmt.Println("\nBordo is up. Next:")
+		fmt.Println("  bordo platform token    # get the setup token")
+		fmt.Println("  bordo setup             # configure (no flags needed on the server)")
+	}
+	return nil
 }
 
 func platformDownCmd() *cobra.Command {
@@ -247,24 +269,33 @@ The token is regenerated every time bordod restarts, so this always
 returns the token for the latest start. Once setup is complete the token
 is no longer logged and this reports that Bordo is already configured.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := ensureInstalled(); err != nil {
-				return err
-			}
-			dir := platformDir()
-			out, err := exec.Command("docker", "compose",
-				"-f", filepath.Join(dir, "docker-compose.yml"),
-				"logs", "bordod").CombinedOutput()
+			tok, err := readSetupToken()
 			if err != nil {
-				return fmt.Errorf("reading bordod logs: %w", err)
-			}
-			tok := extractSetupToken(string(out))
-			if tok == "" {
-				return fmt.Errorf("no setup token found — Bordo may already be configured, or bordod hasn't started yet (check: bordo platform status)")
+				return err
 			}
 			fmt.Println(tok)
 			return nil
 		},
 	}
+}
+
+// readSetupToken returns bordod's current setup token from its logs.
+func readSetupToken() (string, error) {
+	if err := ensureInstalled(); err != nil {
+		return "", err
+	}
+	dir := platformDir()
+	out, err := exec.Command("docker", "compose",
+		"-f", filepath.Join(dir, "docker-compose.yml"),
+		"logs", "bordod").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("reading bordod logs: %w", err)
+	}
+	tok := extractSetupToken(string(out))
+	if tok == "" {
+		return "", fmt.Errorf("no setup token found — Bordo may already be configured, or bordod hasn't started yet (check: bordo platform status)")
+	}
+	return tok, nil
 }
 
 // setupTokenRE matches the 64-hex setup token in both JSON and text log

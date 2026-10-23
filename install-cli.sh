@@ -5,6 +5,7 @@
 # Env overrides:
 #   BORDO_INSTALL_DIR   install location (default: /usr/local/bin, falls back to ~/.local/bin)
 #   BORDO_VERSION       specific tag to install (default: latest release)
+#   BORDO_SETUP=1       run `bordo setup` right after installing
 set -eu
 
 REPO="hasangenc0/bordo"
@@ -61,3 +62,11 @@ case ":$PATH:" in
   *) echo "NOTE: add $DEST to your PATH:  export PATH=\"$DEST:\$PATH\"" ;;
 esac
 "$DEST/$BIN" version || true
+
+# stdin is the pipe from curl, so setup reads its prompts from the terminal.
+if [ "${BORDO_SETUP:-}" = "1" ] && [ -r /dev/tty ]; then
+  echo
+  exec "$DEST/$BIN" setup </dev/tty
+fi
+echo
+echo "Next: $BIN setup"
