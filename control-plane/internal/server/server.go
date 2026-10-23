@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -57,10 +58,14 @@ type Server struct {
 
 // workloadReport is a region's reconciler-reported runtime snapshot.
 type workloadReport struct {
-	Region     string        `json:"region"`
-	ReportedAt time.Time     `json:"reported_at"`
-	Services   []observedSvc `json:"services"`
-	Pods       []observedPod `json:"pods"`
+	Region     string    `json:"region"`
+	ReportedAt time.Time `json:"reported_at"`
+	// HostAddr is the address the reconciler's requests came from, i.e. the region
+	// machine as the control plane sees it (a NAT or tunnel address if one is in the way).
+	HostAddr string        `json:"host_addr,omitempty"`
+	URLs     []string      `json:"urls,omitempty"`
+	Services []observedSvc `json:"services"`
+	Pods     []observedPod `json:"pods"`
 }
 
 type observedSvc struct {
@@ -537,6 +542,16 @@ func (s *Server) handleFleetStatus(w http.ResponseWriter, r *http.Request) {
 	observed := ""
 	if req.Observed != nil {
 		rep := workloadReport{Region: region, ReportedAt: now, Services: req.Observed.Services, Pods: req.Observed.Pods}
+		if host, _, herr := net.SplitHostPort(r.RemoteAddr); herr == nil {
+			rep.HostAddr = host
+		}
+		for _, svc := range rep.Services {
+			for _, np := range svc.NodePorts {
+				if rep.HostAddr != "" {
+					rep.URLs = append(rep.URLs, "http://"+net.JoinHostPort(rep.HostAddr, strconv.Itoa(np)))
+				}
+			}
+		}
 		s.workloadsMu.Lock()
 		if s.workloads == nil {
 			s.workloads = map[string]workloadReport{}
@@ -574,7 +589,11 @@ func describeWorkloads(rep workloadReport) string {
 	var b strings.Builder
 	for _, svc := range rep.Services {
 		for _, np := range svc.NodePorts {
-			fmt.Fprintf(&b, "service %s exposes nodePort %d (http://<region-host-ip>:%d). ", svc.Name, np, np)
+			host := "<region-host-ip>"
+			if rep.HostAddr != "" {
+				host = rep.HostAddr
+			}
+			fmt.Fprintf(&b, "service %s exposes nodePort %d (http://%s:%d). ", svc.Name, np, host, np)
 		}
 	}
 	for _, p := range rep.Pods {

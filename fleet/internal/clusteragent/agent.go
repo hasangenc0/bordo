@@ -222,7 +222,12 @@ func (a *Agent) Run(ctx context.Context) error {
 // pod's ServiceAccount automatically (no kubeconfig), so RBAC is enforced by the
 // cluster, scoped to the namespace the SA is bound to.
 func kubectlApply(ctx context.Context, namespace, manifests string) error {
-	cmd := exec.CommandContext(ctx, "kubectl", "apply", "-n", namespace, "-f", "-")
+	cmd := exec.CommandContext(ctx, "kubectl", "apply", "-n", namespace, "-f", "-",
+		// Delete Bordo-managed Deployments/Services that are no longer in the desired state
+		// (superseded or removed releases). Only objects labelled bordo.io/managed are touched,
+		// and only these two kinds; the reconciler's Role grants nothing broader.
+		"--prune", "-l", "bordo.io/managed=true",
+		"--prune-allowlist=apps/v1/Deployment", "--prune-allowlist=core/v1/Service")
 	cmd.Stdin = strings.NewReader(manifests)
 	var out bytes.Buffer
 	cmd.Stdout = &out

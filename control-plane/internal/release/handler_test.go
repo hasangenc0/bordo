@@ -78,3 +78,23 @@ func TestDeployUnknownProjectIs404(t *testing.T) {
 		t.Errorf("got %d, want 404 (a release for a project that does not exist is orphaned)", w.Code)
 	}
 }
+
+func TestCanonicalProjectID(t *testing.T) {
+	known := map[string]string{
+		"6dfbda48-1111-2222-3333-444444444444": "6dfbda48-1111-2222-3333-444444444444",
+		"city-events-api":                      "6dfbda48-1111-2222-3333-444444444444",
+	}
+	full := "6dfbda48-1111-2222-3333-444444444444"
+	for _, in := range []string{full, "city-events-api", "6dfbda48", "6dfbda48-1111"} {
+		if got := canonicalProjectID(known, in); got != full {
+			t.Errorf("canonicalProjectID(%q) = %q, want %q", in, got, full)
+		}
+	}
+	if got := canonicalProjectID(known, "abc"); got != "abc" {
+		t.Errorf("short unknown id changed to %q", got)
+	}
+	known["6dfbda48-9999-0000-0000-000000000000"] = "6dfbda48-9999-0000-0000-000000000000"
+	if got := canonicalProjectID(known, "6dfbda48"); got != "6dfbda48" {
+		t.Errorf("ambiguous prefix resolved to %q", got)
+	}
+}

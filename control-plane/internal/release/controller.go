@@ -231,6 +231,7 @@ metadata:
   labels:
     app: {{.AppLabel}}
     bordo.io/project: {{.ProjectID}}
+    bordo.io/managed: "true"
 spec:
   replicas: {{.Replicas}}
   selector:
@@ -260,6 +261,8 @@ kind: Service
 metadata:
   name: {{.AppLabel}}
   namespace: bordo-apps
+  labels:
+    bordo.io/managed: "true"
 spec:
   selector:
     app: {{.AppLabel}}

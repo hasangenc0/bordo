@@ -63,7 +63,18 @@ type createRequest struct {
 func (h *Handler) resolveProject(ctx context.Context, idOrName string) (string, bool) {
 	var id string
 	err := h.db.QueryRowContext(ctx, `SELECT id FROM projects WHERE id = ? OR name = ? LIMIT 1`, idOrName, idOrName).Scan(&id)
-	return id, err == nil
+	if err == nil {
+		return id, true
+	}
+	// An id prefix an agent copied from a truncated listing, accepted only if unambiguous.
+	if len(idOrName) >= 6 {
+		var n int
+		if h.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM projects WHERE id LIKE ?`, idOrName+"%").Scan(&n) == nil && n == 1 {
+			err = h.db.QueryRowContext(ctx, `SELECT id FROM projects WHERE id LIKE ?`, idOrName+"%").Scan(&id)
+			return id, err == nil
+		}
+	}
+	return "", false
 }
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
