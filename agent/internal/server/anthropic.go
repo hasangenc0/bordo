@@ -64,6 +64,19 @@ type oaiMessage struct {
 	ToolCallID string        `json:"tool_call_id,omitempty"`
 }
 
+// MarshalJSON always emits "content". An assistant turn that only calls tools has empty text,
+// and omitting the field makes strict OpenAI-compatible providers reject the next request with
+// "missing field `content`".
+func (m oaiMessage) MarshalJSON() ([]byte, error) {
+	type wire struct {
+		Role       string        `json:"role"`
+		Content    string        `json:"content"`
+		ToolCalls  []oaiToolCall `json:"tool_calls,omitempty"`
+		ToolCallID string        `json:"tool_call_id,omitempty"`
+	}
+	return json.Marshal(wire(m))
+}
+
 type oaiToolCall struct {
 	ID       string      `json:"id"`
 	Type     string      `json:"type"` // "function"
