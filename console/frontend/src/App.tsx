@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-route
 import type { ActionEvent, WSIncoming } from './types'
 import { ActivityPanel } from './components/ActivityPanel'
 import { ChatPane } from './components/ChatPane'
+import { Logo } from './components/Logo'
 import { Sidebar } from './components/Sidebar'
 import { useAuth } from './hooks/useAuth'
 import { useChats } from './hooks/useChats'
@@ -216,7 +217,7 @@ function Shell() {
           {showDock && (
             <div className="dock">
               <div className="dock-head">
-                <span className="dock-title"><Sparkles size={14} aria-hidden="true" /> Bordo</span>
+                <span className="dock-title"><Logo size={16} /> Bordo</span>
                 <select
                   className="select dock-select"
                   value={activeChatId ?? ''}

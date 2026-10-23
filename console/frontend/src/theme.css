@@ -50,11 +50,7 @@ body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
   padding: 16px 16px 12px; border-bottom: none;
   font-size: 14.5px; font-weight: 650; letter-spacing: -0.02em;
 }
-.sidebar-logo::before {
-  content: ''; width: 18px; height: 18px; border-radius: 5px; flex-shrink: 0;
-  background: var(--accent);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 1px 2px rgba(17, 17, 16, 0.25);
-}
+.sidebar-logo .logo { flex-shrink: 0; box-shadow: 0 1px 2px rgba(17, 17, 16, 0.25); }
 .sidebar-nav-section { padding: 4px 8px; }
 .sidebar-bottom { border-top: 1px solid var(--border); padding: 8px; }
 .sidebar-item {
@@ -153,10 +149,9 @@ body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 /* welcome */
 .chat-welcome .chat-empty-title { font-size: 24px; font-weight: 640; letter-spacing: -0.025em; margin-bottom: 6px; }
 .chat-empty-hint { font-size: 14px; color: var(--text-muted); max-width: 420px; line-height: 1.55; }
-.chat-empty-icon {
-  width: 44px; height: 44px; margin: 0 auto 18px; border-radius: 12px;
-  background: var(--bg); border: 1px solid var(--border); box-shadow: var(--shadow-sm); color: var(--text);
-}
+.chat-empty-icon { display: block; margin: 0 auto 20px; line-height: 0; }
+.chat-empty-icon .logo { box-shadow: 0 10px 28px -10px rgba(120, 30, 55, 0.55), 0 2px 6px rgba(17, 17, 16, 0.14); }
+.dock-title .logo { box-shadow: 0 1px 2px rgba(17, 17, 16, 0.2); }
 .suggestions { gap: 8px; max-width: 600px; margin-top: 26px; }
 .suggestion {
   border-radius: 10px; border: 1px solid var(--border); background: var(--bg); color: var(--text);

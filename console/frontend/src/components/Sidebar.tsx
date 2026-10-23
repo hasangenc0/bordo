@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import { Activity, Box, Globe, Settings, Sparkles } from 'lucide-react'
+import { Logo } from './Logo'
 
 const NAV_ITEMS = [
   { to: '/', label: 'Chat', icon: Sparkles, end: true },
@@ -11,7 +12,7 @@ const NAV_ITEMS = [
 export function Sidebar() {
   return (
     <nav className="sidebar">
-      <div className="sidebar-logo">Bordo</div>
+      <div className="sidebar-logo"><Logo size={20} />Bordo</div>
 
       <div className="sidebar-nav-section">
         <ul className="sidebar-nav">

@@ -1,7 +1,8 @@
 import { useRef, useState } from 'react'
 import type { Message } from '../types'
 import { MessageList } from './MessageList'
-import { ArrowUp, Sparkles } from 'lucide-react'
+import { ArrowUp } from 'lucide-react'
+import { Logo } from './Logo'
 
 interface Props {
   messages: Message[]
@@ -59,7 +60,7 @@ export function ChatPane({ messages, onSend, connected, busy, chatId, title, var
 
       {empty ? (
         <div className="chat-welcome">
-          <div className="chat-empty-icon"><Sparkles size={30} strokeWidth={1.5} aria-hidden="true" /></div>
+          <div className="chat-empty-icon"><Logo size={52} /></div>
           <h2 className="chat-empty-title">What do you want to build?</h2>
           <p className="chat-empty-hint">Create apps, ship them to your regions, check metrics, or change code. Just ask.</p>
           <div className="suggestions">
