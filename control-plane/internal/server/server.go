@@ -542,7 +542,7 @@ func (s *Server) handleFleetStatus(w http.ResponseWriter, r *http.Request) {
 	observed := ""
 	if req.Observed != nil {
 		rep := workloadReport{Region: region, ReportedAt: now, Services: req.Observed.Services, Pods: req.Observed.Pods}
-		if host, _, herr := net.SplitHostPort(r.RemoteAddr); herr == nil {
+		if host, _, herr := net.SplitHostPort(r.RemoteAddr); herr == nil && publicAddr(host) {
 			rep.HostAddr = host
 		}
 		for _, svc := range rep.Services {
@@ -581,6 +581,23 @@ func (s *Server) handleFleetStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "recorded", "region": region})
+}
+
+// publicAddr reports whether ip is a routable address worth showing as a URL. A
+// loopback, private (Docker bridge, LAN, CGNAT/tailnet) or link-local source means
+// the control plane saw a proxy or bridge, not the machine's public address.
+func publicAddr(ip string) bool {
+	a := net.ParseIP(ip)
+	if a == nil {
+		return false
+	}
+	if a.IsLoopback() || a.IsPrivate() || a.IsLinkLocalUnicast() || a.IsUnspecified() {
+		return false
+	}
+	if v4 := a.To4(); v4 != nil && v4[0] == 100 && v4[1]&0xC0 == 64 { // 100.64.0.0/10
+		return false
+	}
+	return true
 }
 
 // describeWorkloads renders a reconciler snapshot as the human-readable tail of

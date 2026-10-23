@@ -139,3 +139,15 @@ func TestHandleFleetStatusWritesALogOnSuccess(t *testing.T) {
 		t.Errorf("status=%q log=%q", statusOf(t, db, "r1"), log)
 	}
 }
+
+func TestPublicAddr(t *testing.T) {
+	for ip, want := range map[string]bool{
+		"172.18.0.1": false, "10.0.0.5": false, "192.168.1.2": false, "127.0.0.1": false,
+		"100.101.102.103": false, "169.254.1.1": false, "::1": false, "": false,
+		"203.0.113.9": true, "8.8.8.8": true,
+	} {
+		if got := publicAddr(ip); got != want {
+			t.Errorf("publicAddr(%q) = %v, want %v", ip, got, want)
+		}
+	}
+}
