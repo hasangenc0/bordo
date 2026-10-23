@@ -91,9 +91,23 @@ func (e *Executor) run(ctx context.Context, buildID string) error {
 	}
 	_ = e.store.AppendLog(ctx, buildID, "[bordo] build started")
 
+	var known int
+	if err := e.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM projects WHERE id = ?`, b.ProjectID).Scan(&known); err != nil || known == 0 {
+		msg := fmt.Sprintf("project %q does not exist (deleted or wrong id); nothing to build", b.ProjectID)
+		_ = e.store.AppendLog(ctx, buildID, "[error] "+msg)
+		return e.store.UpdateStatus(ctx, buildID, "failed", "", msg)
+	}
+
 	// A project that points at an existing repo and has no template is imported: its
 	// code already lives on GitHub. It must never be scaffolded into or pushed over.
 	if repoURL := e.resolveRepoURL(ctx, b.ProjectID); repoURL != "" && e.resolveTemplate(ctx, b.ProjectID) == "" {
+		return e.buildImported(ctx, buildID, repoURL)
+	}
+
+	// A template project whose repo already has code (a previous build pushed the scaffold,
+	// or the agent has since changed it) builds from that repo's default branch, read-only.
+	// Re-scaffolding would force-push the template over those changes.
+	if repoURL := e.resolveRepoURL(ctx, b.ProjectID); repoURL != "" && e.repoHasBuildableCode(ctx, buildID, repoURL) {
 		return e.buildImported(ctx, buildID, repoURL)
 	}
 
@@ -119,8 +133,10 @@ func (e *Executor) run(ctx context.Context, buildID string) error {
 	}
 
 	if _, statErr := os.Stat(filepath.Join(scaffoldDir, "Dockerfile")); os.IsNotExist(statErr) {
-		_ = e.store.AppendLog(ctx, buildID, "[bordo] no Dockerfile found — skipping build")
-		return e.store.UpdateStatus(ctx, buildID, "success", "", "")
+		// "Success" with no image made later deploys ship an empty tag, so this is a failure.
+		msg := "nothing to build: the project has no template or repository that provides a Dockerfile"
+		_ = e.store.AppendLog(ctx, buildID, "[error] "+msg)
+		return e.store.UpdateStatus(ctx, buildID, "failed", "", msg)
 	}
 
 	// Step 2: build via GitHub Actions when a GitHub token is configured.
@@ -159,6 +175,38 @@ func (e *Executor) ensureRepo(ctx context.Context, buildID string, b *Build) str
 	}
 	_ = e.store.AppendLog(ctx, buildID, "[bordo] repo created: "+cloneURL)
 	return cloneURL
+}
+
+// repoHasBuildableCode reports whether repoURL already has a commit with a root Dockerfile on its
+// default branch (whatever that is called). For such repos Bordo adds its build workflow if it
+// is missing, since for a project Bordo created it owns that file. Any doubt returns false and
+// the caller falls back to scaffolding into an empty repo.
+func (e *Executor) repoHasBuildableCode(ctx context.Context, buildID, repoURL string) bool {
+	if e.ghStore == nil {
+		return false
+	}
+	owner, name, err := githubpkg.ParseRepoURL(repoURL)
+	if err != nil {
+		return false
+	}
+	token, err := e.githubToken(ctx)
+	if err != nil || token == "" {
+		return false
+	}
+	branch, sha, err := githubpkg.RepoHead(ctx, token, owner, name)
+	if err != nil || sha == "" {
+		return false // empty repo: nothing to preserve
+	}
+	if ok, err := githubpkg.RepoHasFile(ctx, token, owner, name, "Dockerfile", sha); err != nil || !ok {
+		return false
+	}
+	_ = e.store.AppendLog(ctx, buildID, fmt.Sprintf("[bordo] %s/%s already has code on %q — building it as is (not re-scaffolding)", owner, name, branch))
+	if ok, err := githubpkg.RepoHasFile(ctx, token, owner, name, workflowPath, sha); err == nil && !ok {
+		if err := githubpkg.EnsureWorkflowFile(ctx, token, owner, name); err != nil {
+			_ = e.store.AppendLog(ctx, buildID, fmt.Sprintf("[warn] could not add the build workflow: %v", err))
+		}
+	}
+	return true
 }
 
 const errGitHubNotConnected = "GitHub is not connected, so no repository can be created. Run 'bordo github login' on a machine that can reach bordod, then try again."

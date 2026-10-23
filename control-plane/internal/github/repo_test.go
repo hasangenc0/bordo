@@ -124,3 +124,13 @@ func TestAwaitRunDoesNotDispatchWhenPushRunExists(t *testing.T) {
 		t.Error("must not dispatch when a run already exists")
 	}
 }
+
+func TestWorkflowTriggersOnTheRepoDefaultBranch(t *testing.T) {
+	y := workflowYAML("master")
+	if !strings.Contains(y, "branches: [master]") || strings.Contains(y, "[main]") {
+		t.Errorf("workflow must listen on master:\n%s", y)
+	}
+	if !strings.Contains(y, "${{ github.sha }}") || !strings.Contains(y, "workflow_dispatch") {
+		t.Errorf("workflow lost its expressions or dispatch trigger:\n%s", y)
+	}
+}

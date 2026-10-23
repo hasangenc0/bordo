@@ -15,8 +15,8 @@ const workflowPath = ".github/workflows/" + githubpkg.BuildWorkflowFile
 // Tunable for tests: how long to wait for GitHub to start a run on its own before
 // dispatching the workflow, and how often to poll afterwards.
 var (
-	importedRunGrace = 45 * time.Second
-	importedPoll     = 15 * time.Second
+	importedRunGrace = 12 * time.Second
+	importedPoll     = 5 * time.Second
 )
 
 // buildImported builds a project whose code already lives on GitHub. It only reads

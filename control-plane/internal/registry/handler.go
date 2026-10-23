@@ -113,7 +113,15 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	p, err := h.store.GetProject(r.Context(), id)
 	if errors.Is(err, ErrNotFound) {
-		writeErr(w, http.StatusNotFound, "project not found")
+		// Callers (notably the agent) sometimes pass the project name instead of its UUID.
+		p, err = h.store.GetProjectByName(r.Context(), id)
+		id = ""
+		if p != nil {
+			id = p.ID
+		}
+	}
+	if errors.Is(err, ErrNotFound) {
+		writeErr(w, http.StatusNotFound, "project not found (use the id or exact name from project_list)")
 		return
 	}
 	if err != nil {

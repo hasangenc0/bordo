@@ -320,9 +320,15 @@ func EnsureWorkflowFile(ctx context.Context, token, owner, repo string) error {
 		return nil // already present
 	}
 
+	// Trigger on the repo's real default branch ("main", "master", ...), not a guess:
+	// a workflow listening on the wrong branch never runs on push.
+	branch, _, herr := RepoHead(ctx, token, owner, repo)
+	if herr != nil || branch == "" {
+		branch = "main"
+	}
 	body, _ := json.Marshal(map[string]string{
 		"message": "Add Bordo build workflow",
-		"content": base64.StdEncoding.EncodeToString([]byte(workflowYAML())),
+		"content": base64.StdEncoding.EncodeToString([]byte(workflowYAML(branch))),
 	})
 	req2, err := http.NewRequestWithContext(ctx, http.MethodPut, apiURL, bytes.NewReader(body))
 	if err != nil {
@@ -343,12 +349,12 @@ func EnsureWorkflowFile(ctx context.Context, token, owner, repo string) error {
 }
 
 // workflowYAML returns the canonical bordo-build.yml content.
-func workflowYAML() string {
-	return `name: Bordo Build
+func workflowYAML(branch string) string {
+	return fmt.Sprintf(`name: Bordo Build
 
 on:
   push:
-    branches: [main]
+    branches: [%s]
   workflow_dispatch:
 
 env:
@@ -385,7 +391,7 @@ jobs:
             ghcr.io/${{ github.repository }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-`
+`, branch)
 }
 
 // GetCurrentUserLogin returns the GitHub login of the authenticated user.

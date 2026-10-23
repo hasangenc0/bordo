@@ -46,13 +46,17 @@ func (h *handler) trigger(w http.ResponseWriter, r *http.Request) {
 	if req.ImageTag == "" {
 		req.ImageTag = "latest"
 	}
-	// Derive image name from project name when not supplied.
+	// The project must exist. Accept its UUID or exact name; without this check a typo or a
+	// deleted project produced a "successful" build with no image.
+	var id, name string
+	row := h.store.db.QueryRowContext(r.Context(), `SELECT id, name FROM projects WHERE id = ? OR name = ? LIMIT 1`, req.ProjectID, req.ProjectID)
+	if err := row.Scan(&id, &name); err != nil {
+		writeErr(w, http.StatusNotFound, "project not found (use the id or exact name from project_list)")
+		return
+	}
+	req.ProjectID = id
 	if req.ImageName == "" {
-		var name string
-		row := h.store.db.QueryRowContext(r.Context(), `SELECT name FROM projects WHERE id = ?`, req.ProjectID)
-		if err := row.Scan(&name); err == nil && name != "" {
-			req.ImageName = name
-		}
+		req.ImageName = name
 	}
 
 	b, err := h.store.Create(r.Context(), req.ProjectID, req.ImageName, req.ImageTag)

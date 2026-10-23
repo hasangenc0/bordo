@@ -102,3 +102,23 @@ func TestCreateProjectRepo(t *testing.T) {
 		t.Errorf("got %v, want project not found", err)
 	}
 }
+
+// A project with neither a template nor a repo has nothing to build. That used to report
+// "success" in a few milliseconds with no image, and the agent then deployed an empty tag.
+func TestBuildWithNothingToBuildFails(t *testing.T) {
+	db := testDB(t)
+	bs := New(db)
+	ex := NewExecutor(bs, db, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir(), t.TempDir(), "", nil)
+	pid := addProject(t, db, "empty", "", "")
+	b, err := bs.Create(context.Background(), pid, "empty", "latest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ex.run(context.Background(), b.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := bs.Get(context.Background(), b.ID)
+	if got.Status != "failed" || !strings.Contains(got.ErrorMessage, "nothing to build") {
+		t.Errorf("status=%q err=%q, want failed: nothing to build", got.Status, got.ErrorMessage)
+	}
+}
