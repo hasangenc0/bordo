@@ -4,6 +4,8 @@ import type { ChatSession } from '../types'
 export function useChats() {
   const [chats, setChats] = useState<ChatSession[]>([])
   const [loading, setLoading] = useState(false)
+  // True once the server has answered at least once, so an empty list means "no chats", not "not loaded".
+  const [loaded, setLoaded] = useState(false)
 
   const fetchChats = useCallback(async () => {
     setLoading(true)
@@ -12,6 +14,7 @@ export function useChats() {
       if (r.ok) {
         const data = (await r.json()) as { chats: ChatSession[] }
         setChats(data.chats ?? [])
+        setLoaded(true)
       }
     } catch {
       // agent may not be reachable yet
@@ -62,5 +65,5 @@ export function useChats() {
     setChats((prev) => prev.map((c) => (c.id === id ? { ...c, title } : c)))
   }, [])
 
-  return { chats, loading, createChat, deleteChat, renameChat, refetch: fetchChats, updateChatTitle }
+  return { chats, loading, loaded, createChat, deleteChat, renameChat, refetch: fetchChats, updateChatTitle }
 }

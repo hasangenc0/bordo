@@ -70,7 +70,7 @@ function Shell() {
   const [showActivity, setShowActivity] = useState(false)
   const [actionEvents, setActionEvents] = useState<ActionEvent[]>([])
   const [pending, setPending] = useState<{ chatId: string; text: string } | null>(null)
-  const { chats, createChat, deleteChat, refetch } = useChats()
+  const { chats, loaded, createChat, deleteChat, refetch } = useChats()
 
   const onHome = location.pathname === '/'
   const activeChat = chats.find((c) => c.id === activeChatId)
@@ -102,12 +102,13 @@ function Shell() {
     writeStore(ACTIVE_CHAT_KEY, id)
   }, [])
 
-  // A remembered chat that no longer exists (deleted elsewhere) falls back to the empty state.
+  // A remembered chat that the server no longer has (deleted elsewhere, or the server was
+  // reset) would otherwise keep receiving messages that never show up in the list.
   useEffect(() => {
-    if (activeChatId && chats.length > 0 && !chats.some((c) => c.id === activeChatId) && pending?.chatId !== activeChatId) {
+    if (loaded && activeChatId && !chats.some((c) => c.id === activeChatId) && pending?.chatId !== activeChatId) {
       selectChat(null)
     }
-  }, [chats, activeChatId, pending, selectChat])
+  }, [loaded, chats, activeChatId, pending, selectChat])
 
   // Deliver a message that created its own chat once that chat's socket is up.
   useEffect(() => {

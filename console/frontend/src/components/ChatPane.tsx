@@ -86,9 +86,9 @@ export function ChatPane({ messages, onSend, connected, busy, chatId, title, var
             el.style.height = `${Math.min(el.scrollHeight, 200)}px`
           }}
           onKeyDown={handleKeyDown}
-          placeholder={canType ? 'Ask Bordo…  (Enter to send, Shift+Enter for a new line)' : 'Connecting to agent…'}
+          placeholder={canType ? (variant === 'page' ? 'Ask Bordo…  (Enter to send, Shift+Enter for a new line)' : 'Ask Bordo…') : 'Connecting to agent…'}
           disabled={!canType}
-          rows={variant === 'page' ? 2 : 1}
+          rows={2}
         />
         <button className="chat-send" onClick={() => submit()} disabled={!canType || busy || !draft.trim()}>
           {busy ? 'Working…' : 'Send'}
