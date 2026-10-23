@@ -323,6 +323,11 @@ func (c *Client) CreateRegion(ctx context.Context, name string) (*Region, error)
 	return &out, nil
 }
 
+// SetRegionHost records the public address of a region's machine.
+func (c *Client) SetRegionHost(ctx context.Context, region, host string) error {
+	return c.post(ctx, "/v1/regions/"+region+"/public-host", map[string]string{"public_host": host}, nil)
+}
+
 // MintJoinToken mints a single-use node-join token for a region.
 func (c *Client) MintJoinToken(ctx context.Context, region string) (*JoinToken, error) {
 	var out JoinToken

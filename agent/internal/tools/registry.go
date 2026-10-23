@@ -45,6 +45,7 @@ func NewBordoToolRegistry(cp *CPClient) *ToolRegistry {
 	// Region / fleet tools
 	r.Register(regionListTool(cp))
 	r.Register(regionAddTool(cp))
+	r.Register(regionSetHostTool(cp))
 	r.Register(regionHealthTool(cp))
 	r.Register(fleetOverviewTool(cp))
 

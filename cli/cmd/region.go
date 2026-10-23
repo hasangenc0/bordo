@@ -14,7 +14,7 @@ func RegionCmd() *cobra.Command {
 		Use:   "region",
 		Short: "Manage fleet regions (k3s clusters)",
 	}
-	cmd.AddCommand(regionAddCmd(), regionTokenCmd())
+	cmd.AddCommand(regionAddCmd(), regionTokenCmd(), regionSetHostCmd())
 	return cmd
 }
 
@@ -57,6 +57,25 @@ func regionTokenCmd() *cobra.Command {
 				return err
 			}
 			printJoinInstructions(args[0], tok)
+			return nil
+		},
+	}
+}
+
+func regionSetHostCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "set-host <name> <ip-or-hostname>",
+		Short: "Record the public address of a region's machine (used for NodePort URLs)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client.NewFromConfig()
+			if err != nil {
+				return err
+			}
+			if err := c.SetRegionHost(cmd.Context(), args[0], args[1]); err != nil {
+				return err
+			}
+			fmt.Printf("Region %q is reachable at %s\n", args[0], args[1])
 			return nil
 		},
 	}

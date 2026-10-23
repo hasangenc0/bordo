@@ -151,3 +151,24 @@ func TestPublicAddr(t *testing.T) {
 		}
 	}
 }
+
+func TestFleetStatusPrefersConfiguredPublicHost(t *testing.T) {
+	s, db := newStatusTestServer(t)
+	db.Exec(`INSERT INTO regions (id, name, status, public_host) VALUES ('reg1','eu','pending','203.0.113.7')`)
+	tok, err := fleet.New(db).IssueClusterToken(context.Background(), "eu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/fleet/status", strings.NewReader(`{"observed":{"services":[{"name":"a","node_ports":[30001]}]}}`))
+	req.RemoteAddr = "172.18.0.1:5555"
+	req.Header.Set("Authorization", "Bearer "+tok)
+	w := httptest.NewRecorder()
+	s.handleFleetStatus(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	rep := s.workloads["eu"]
+	if len(rep.URLs) != 1 || rep.URLs[0] != "http://203.0.113.7:30001" {
+		t.Fatalf("urls = %v", rep.URLs)
+	}
+}

@@ -110,3 +110,27 @@ func fleetOverviewTool(cp *CPClient) *Tool {
 		},
 	}
 }
+
+func regionSetHostTool(cp *CPClient) *Tool {
+	return &Tool{
+		Name: "region_set_host",
+		Description: "Record the public IP or DNS name of a region's machine so app_endpoints can return full NodePort URLs. " +
+			"Use when the user tells you the machine's address. Pass an empty host to clear it.",
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name": map[string]any{"type": "string", "description": "Region name, e.g. eu-central"},
+				"host": map[string]any{"type": "string", "description": "IP address or hostname only (no scheme, port or path)"},
+			},
+			"required": []string{"name", "host"},
+		},
+		CallFn: func(ctx context.Context, params map[string]any) (any, error) {
+			name, _ := params["name"].(string)
+			host, _ := params["host"].(string)
+			if name == "" {
+				return nil, fmt.Errorf("name is required")
+			}
+			return cp.Post(ctx, "/v1/regions/"+name+"/public-host", map[string]any{"public_host": host})
+		},
+	}
+}

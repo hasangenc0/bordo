@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -31,6 +32,7 @@ func NewHandler(store *Store, logger *slog.Logger) http.Handler {
 	r.Delete("/{id}", h.remove)
 	r.Post("/{name}/bootstrap", h.bootstrap)
 	r.Post("/{name}/health", h.reportHealth)
+	r.Post("/{name}/public-host", h.setPublicHost)
 	r.Get("/{name}/health", h.getHealth)
 	r.Post("/{name}/join-tokens", h.mintJoinToken)
 	return r
@@ -311,4 +313,48 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// setPublicHost records the address a region's machine is reached at (IP or DNS name),
+// used to build NodePort URLs. An empty value clears it.
+func (h *handler) setPublicHost(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	var req struct {
+		PublicHost string `json:"public_host"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	host := strings.TrimSpace(req.PublicHost)
+	if host != "" && !validHost(host) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "public_host must be an IP or hostname, without scheme, port or path"})
+		return
+	}
+	res, err := h.store.db.ExecContext(r.Context(), `UPDATE regions SET public_host = ?, updated_at = ? WHERE name = ?`, host, time.Now().UTC(), name)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "region not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"region": name, "public_host": host})
+}
+
+// validHost accepts a bare IP address or DNS name.
+func validHost(s string) bool {
+	if net.ParseIP(s) != nil {
+		return true
+	}
+	if len(s) > 253 || strings.HasPrefix(s, "-") || strings.HasPrefix(s, ".") {
+		return false
+	}
+	for _, c := range s {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '.') {
+			return false
+		}
+	}
+	return true
 }

@@ -542,7 +542,13 @@ func (s *Server) handleFleetStatus(w http.ResponseWriter, r *http.Request) {
 	observed := ""
 	if req.Observed != nil {
 		rep := workloadReport{Region: region, ReportedAt: now, Services: req.Observed.Services, Pods: req.Observed.Pods}
-		if host, _, herr := net.SplitHostPort(r.RemoteAddr); herr == nil && publicAddr(host) {
+		// An operator-set public host wins; otherwise fall back to the connection's source
+		// address when it is routable.
+		var configured string
+		_ = s.db.QueryRowContext(r.Context(), `SELECT public_host FROM regions WHERE name = ?`, region).Scan(&configured)
+		if configured != "" {
+			rep.HostAddr = configured
+		} else if host, _, herr := net.SplitHostPort(r.RemoteAddr); herr == nil && publicAddr(host) {
 			rep.HostAddr = host
 		}
 		for _, svc := range rep.Services {
