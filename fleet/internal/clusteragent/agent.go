@@ -63,19 +63,50 @@ func ConfigFromEnv() (Config, error) {
 // reconcile logic can be unit-tested without a cluster.
 type Applier func(ctx context.Context, namespace, manifests string) error
 
+// Observer reads what is actually running in the namespace after an apply.
+// Injectable for tests.
+type Observer func(ctx context.Context, namespace string) (*Observation, error)
+
+// Observation is a snapshot of the namespace's services and pods: the facts the
+// control plane cannot know on its own (assigned nodePorts, pod readiness,
+// image pull failures).
+type Observation struct {
+	Services []ServiceInfo `json:"services"`
+	Pods     []PodInfo     `json:"pods"`
+}
+
+// ServiceInfo is one Service; NodePorts is set for NodePort/LoadBalancer services.
+type ServiceInfo struct {
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	Port      int    `json:"port"`
+	NodePorts []int  `json:"node_ports,omitempty"`
+}
+
+// PodInfo is one pod's state. Reason carries the container waiting reason
+// (ImagePullBackOff, CrashLoopBackOff, ...) when it is not running.
+type PodInfo struct {
+	Name   string `json:"name"`
+	Phase  string `json:"phase"`
+	Ready  bool   `json:"ready"`
+	Reason string `json:"reason,omitempty"`
+}
+
 // Agent is the on-cluster reconciler.
 type Agent struct {
-	cfg   Config
-	httpc *http.Client
-	apply Applier
+	cfg     Config
+	httpc   *http.Client
+	apply   Applier
+	observe Observer
 }
 
 // New builds an Agent that applies via kubectl using the pod's in-cluster RBAC.
 func New(cfg Config) *Agent {
 	return &Agent{
-		cfg:   cfg,
-		httpc: &http.Client{Timeout: 30 * time.Second},
-		apply: kubectlApply,
+		cfg:     cfg,
+		httpc:   &http.Client{Timeout: 30 * time.Second},
+		apply:   kubectlApply,
+		observe: kubectlObserve,
 	}
 }
 
@@ -117,11 +148,12 @@ func (a *Agent) fetchDesiredState(ctx context.Context) (string, []string, error)
 // reportStatus tells the control plane which releases this cycle applied, so it
 // can advance them from reconciling to deployed (or failed). Best-effort: a
 // reporting hiccup must not stop the reconcile loop, so errors are only logged.
-func (a *Agent) reportStatus(ctx context.Context, releaseIDs []string, applyErr error) {
+func (a *Agent) reportStatus(ctx context.Context, releaseIDs []string, applyErr error, obs *Observation) {
 	body := struct {
-		AppliedReleaseIDs []string `json:"applied_release_ids"`
-		Error             string   `json:"error"`
-	}{AppliedReleaseIDs: releaseIDs}
+		AppliedReleaseIDs []string     `json:"applied_release_ids"`
+		Error             string       `json:"error"`
+		Observed          *Observation `json:"observed,omitempty"`
+	}{AppliedReleaseIDs: releaseIDs, Observed: obs}
 	if applyErr != nil {
 		body.Error = applyErr.Error()
 	}
@@ -153,8 +185,17 @@ func (a *Agent) ReconcileOnce(ctx context.Context) error {
 		return nil
 	}
 	applyErr := a.apply(ctx, a.cfg.Namespace, manifests)
-	if len(releaseIDs) > 0 {
-		a.reportStatus(ctx, releaseIDs, applyErr)
+	var obs *Observation
+	if a.observe != nil {
+		o, oerr := a.observe(ctx, a.cfg.Namespace)
+		if oerr != nil {
+			fmt.Printf("[bordo-reconciler] observe: %v\n", oerr)
+		} else {
+			obs = o
+		}
+	}
+	if len(releaseIDs) > 0 || obs != nil {
+		a.reportStatus(ctx, releaseIDs, applyErr, obs)
 	}
 	return applyErr
 }
@@ -190,4 +231,83 @@ func kubectlApply(ctx context.Context, namespace, manifests string) error {
 		return fmt.Errorf("kubectl apply: %w\n%s", err, out.String())
 	}
 	return nil
+}
+
+// kubectlObserve lists the namespace's services and pods. It needs only the
+// get/list on services and pods the reconciler's Role already grants.
+func kubectlObserve(ctx context.Context, namespace string) (*Observation, error) {
+	cmd := exec.CommandContext(ctx, "kubectl", "get", "services,pods", "-n", namespace, "-o", "json")
+	var out, errOut bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("kubectl get: %w: %s", err, strings.TrimSpace(errOut.String()))
+	}
+	return parseObservation(out.Bytes())
+}
+
+func parseObservation(raw []byte) (*Observation, error) {
+	var list struct {
+		Items []struct {
+			Kind     string `json:"kind"`
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+			Spec struct {
+				Type  string `json:"type"`
+				Ports []struct {
+					Port     int `json:"port"`
+					NodePort int `json:"nodePort"`
+				} `json:"ports"`
+			} `json:"spec"`
+			Status struct {
+				Phase             string `json:"phase"`
+				ContainerStatuses []struct {
+					Ready bool `json:"ready"`
+					State struct {
+						Waiting *struct {
+							Reason string `json:"reason"`
+						} `json:"waiting"`
+						Terminated *struct {
+							Reason string `json:"reason"`
+						} `json:"terminated"`
+					} `json:"state"`
+				} `json:"containerStatuses"`
+			} `json:"status"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return nil, err
+	}
+	obs := &Observation{}
+	for _, it := range list.Items {
+		switch it.Kind {
+		case "Service":
+			svc := ServiceInfo{Name: it.Metadata.Name, Type: it.Spec.Type}
+			for _, p := range it.Spec.Ports {
+				if svc.Port == 0 {
+					svc.Port = p.Port
+				}
+				if p.NodePort != 0 {
+					svc.NodePorts = append(svc.NodePorts, p.NodePort)
+				}
+			}
+			obs.Services = append(obs.Services, svc)
+		case "Pod":
+			pod := PodInfo{Name: it.Metadata.Name, Phase: it.Status.Phase, Ready: len(it.Status.ContainerStatuses) > 0}
+			for _, cs := range it.Status.ContainerStatuses {
+				if !cs.Ready {
+					pod.Ready = false
+				}
+				if pod.Reason == "" && cs.State.Waiting != nil {
+					pod.Reason = cs.State.Waiting.Reason
+				}
+				if pod.Reason == "" && cs.State.Terminated != nil {
+					pod.Reason = cs.State.Terminated.Reason
+				}
+			}
+			obs.Pods = append(obs.Pods, pod)
+		}
+	}
+	return obs, nil
 }

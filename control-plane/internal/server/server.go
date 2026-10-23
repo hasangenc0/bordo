@@ -10,7 +10,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -45,6 +47,34 @@ type Server struct {
 	ghStore           *githubpkg.Store
 	settingsStore     *settings.Store
 	setupHandler      *setup.Handler
+
+	// workloads holds the latest runtime snapshot each region's reconciler
+	// reported (services, nodePorts, pod states). In memory only: the reconciler
+	// re-reports every cycle.
+	workloadsMu sync.RWMutex
+	workloads   map[string]workloadReport
+}
+
+// workloadReport is a region's reconciler-reported runtime snapshot.
+type workloadReport struct {
+	Region     string        `json:"region"`
+	ReportedAt time.Time     `json:"reported_at"`
+	Services   []observedSvc `json:"services"`
+	Pods       []observedPod `json:"pods"`
+}
+
+type observedSvc struct {
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	Port      int    `json:"port"`
+	NodePorts []int  `json:"node_ports,omitempty"`
+}
+
+type observedPod struct {
+	Name   string `json:"name"`
+	Phase  string `json:"phase"`
+	Ready  bool   `json:"ready"`
+	Reason string `json:"reason,omitempty"`
 }
 
 // New creates a Server wired with all routes.
@@ -256,6 +286,7 @@ func (s *Server) registerRoutes() {
 		templateHandler := bordobtemplate.NewHandler(os.Getenv("BORDO_TEMPLATE_ROOT"))
 		r.Mount("/templates", templateHandler)
 		r.Get("/fleet", s.handleFleetOverview)
+		r.Get("/fleet/workloads", s.handleFleetWorkloads)
 
 		// GitHub App integration helpers.
 		r.Get("/github/token", s.handleGithubToken)
@@ -490,6 +521,10 @@ func (s *Server) handleFleetStatus(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		AppliedReleaseIDs []string `json:"applied_release_ids"`
 		Error             string   `json:"error"`
+		Observed          *struct {
+			Services []observedSvc `json:"services"`
+			Pods     []observedPod `json:"pods"`
+		} `json:"observed"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -499,6 +534,17 @@ func (s *Server) handleFleetStatus(w http.ResponseWriter, r *http.Request) {
 	s.recordRegionPull(r.Context(), region)
 
 	now := time.Now().UTC()
+	observed := ""
+	if req.Observed != nil {
+		rep := workloadReport{Region: region, ReportedAt: now, Services: req.Observed.Services, Pods: req.Observed.Pods}
+		s.workloadsMu.Lock()
+		if s.workloads == nil {
+			s.workloads = map[string]workloadReport{}
+		}
+		s.workloads[region] = rep
+		s.workloadsMu.Unlock()
+		observed = describeWorkloads(rep)
+	}
 	for _, id := range req.AppliedReleaseIDs {
 		if req.Error == "" {
 			// Only advance releases still reconciling; never override a release
@@ -506,8 +552,8 @@ func (s *Server) handleFleetStatus(w http.ResponseWriter, r *http.Request) {
 			// reporting region so a token can't touch another region's releases.
 			// "deployed" means the region's reconciler applied the manifests without error. The
 			// pull model does not report pod state back, so say that instead of leaving the log empty.
-			msg := fmt.Sprintf("[bordo] %s: region %s applied the manifests (kubectl apply succeeded). Pod rollout state is not reported back; check the pods on the region host if the app is not reachable.\n",
-				now.Format(time.RFC3339), region)
+			msg := fmt.Sprintf("[bordo] %s: region %s applied the manifests (kubectl apply succeeded). %s\n",
+				now.Format(time.RFC3339), region, observed)
 			_, _ = s.db.ExecContext(r.Context(),
 				`UPDATE bordo_releases SET status = 'deployed', log = ?, updated_at = ?
 				 WHERE id = ? AND region = ? AND status = 'reconciling'`,
@@ -520,6 +566,48 @@ func (s *Server) handleFleetStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "recorded", "region": region})
+}
+
+// describeWorkloads renders a reconciler snapshot as the human-readable tail of
+// a release log: nodePorts and pod states, or an honest "not reported".
+func describeWorkloads(rep workloadReport) string {
+	var b strings.Builder
+	for _, svc := range rep.Services {
+		for _, np := range svc.NodePorts {
+			fmt.Fprintf(&b, "service %s exposes nodePort %d (http://<region-host-ip>:%d). ", svc.Name, np, np)
+		}
+	}
+	for _, p := range rep.Pods {
+		state := p.Phase
+		if p.Ready {
+			state += ", ready"
+		} else if p.Reason != "" {
+			state += ", " + p.Reason
+		} else {
+			state += ", not ready yet"
+		}
+		fmt.Fprintf(&b, "pod %s: %s. ", p.Name, state)
+	}
+	if b.Len() == 0 {
+		return "No services or pods were visible in the namespace yet."
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// handleFleetWorkloads returns the latest reconciler-reported services (with
+// nodePorts) and pod states, optionally for one region (?region=).
+func (s *Server) handleFleetWorkloads(w http.ResponseWriter, r *http.Request) {
+	want := r.URL.Query().Get("region")
+	s.workloadsMu.RLock()
+	out := make([]workloadReport, 0, len(s.workloads))
+	for name, rep := range s.workloads {
+		if want == "" || want == name {
+			out = append(out, rep)
+		}
+	}
+	s.workloadsMu.RUnlock()
+	sort.Slice(out, func(i, j int) bool { return out[i].Region < out[j].Region })
+	writeJSON(w, http.StatusOK, map[string]any{"regions": out})
 }
 
 // recordRegionPull marks a region as live: it stamps last_pull_at, derives the

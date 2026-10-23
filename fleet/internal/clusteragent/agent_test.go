@@ -159,3 +159,46 @@ func TestReconcileOnceEmptyIsNoop(t *testing.T) {
 		t.Fatal("empty desired state should not trigger apply")
 	}
 }
+
+func TestParseObservation(t *testing.T) {
+	raw := []byte(`{"items":[
+	 {"kind":"Service","metadata":{"name":"api"},"spec":{"type":"NodePort","ports":[{"port":8080,"nodePort":30123}]}},
+	 {"kind":"Pod","metadata":{"name":"api-1"},"status":{"phase":"Pending","containerStatuses":[{"ready":false,"state":{"waiting":{"reason":"ImagePullBackOff"}}}]}},
+	 {"kind":"Pod","metadata":{"name":"api-2"},"status":{"phase":"Running","containerStatuses":[{"ready":true,"state":{}}]}}]}`)
+	obs, err := parseObservation(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(obs.Services) != 1 || obs.Services[0].NodePorts[0] != 30123 {
+		t.Fatalf("services = %+v", obs.Services)
+	}
+	if len(obs.Pods) != 2 || obs.Pods[0].Reason != "ImagePullBackOff" || obs.Pods[0].Ready || !obs.Pods[1].Ready {
+		t.Fatalf("pods = %+v", obs.Pods)
+	}
+}
+
+func TestReconcileOnceReportsObservation(t *testing.T) {
+	var got struct {
+		IDs      []string     `json:"applied_release_ids"`
+		Observed *Observation `json:"observed"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/fleet/status" {
+			_ = json.NewDecoder(r.Body).Decode(&got)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"manifests": "x", "release_ids": []string{"r1"}})
+	}))
+	defer srv.Close()
+	a := New(Config{CPURL: srv.URL, ClusterToken: "ct", Interval: time.Second, Namespace: "ns"})
+	a.apply = func(context.Context, string, string) error { return nil }
+	a.observe = func(context.Context, string) (*Observation, error) {
+		return &Observation{Services: []ServiceInfo{{Name: "api", NodePorts: []int{30001}}}}, nil
+	}
+	if err := a.ReconcileOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.IDs) != 1 || got.Observed == nil || got.Observed.Services[0].NodePorts[0] != 30001 {
+		t.Fatalf("report = %+v", got)
+	}
+}

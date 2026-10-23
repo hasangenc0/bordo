@@ -160,3 +160,25 @@ func rollbackTool(cp *CPClient) *Tool {
 		},
 	}
 }
+
+func appEndpointsTool(cp *CPClient) *Tool {
+	return &Tool{
+		Name: "app_endpoints",
+		Description: "Show what is actually running in a region as reported by its in-cluster reconciler: services with their assigned nodePorts " +
+			"and each pod's state (ready, ImagePullBackOff, CrashLoopBackOff...). Use after a deploy to find the nodePort and to tell 'applied' from 'serving'. " +
+			"The public URL is http://<region-host-ip>:<node_port>; the control plane does not know the host IP, so ask the user for it if it is not already known.",
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"region": map[string]any{"type": "string", "description": "Region name (optional; all regions when omitted)"},
+			},
+		},
+		CallFn: func(ctx context.Context, params map[string]any) (any, error) {
+			path := "/v1/fleet/workloads"
+			if region, _ := params["region"].(string); region != "" {
+				path += "?region=" + region
+			}
+			return cp.Get(ctx, path)
+		},
+	}
+}
