@@ -8,11 +8,13 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	githubpkg "github.com/hasangenc0/bordo/control-plane/internal/github"
 )
 
 type createRequest struct {
-	Name     string `json:"name"`
-	Template string `json:"template"`
+	Name       string `json:"name"`
+	Template   string `json:"template"`
+	GitRepoURL string `json:"git_repo_url"` // import an existing GitHub repo instead of a template
 }
 
 // NewHandler returns a chi router implementing the /projects REST API.
@@ -39,14 +41,34 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
+
+	repoURL := ""
+	if strings.TrimSpace(req.GitRepoURL) != "" {
+		// An imported repo and a template are mutually exclusive: builds scaffold the
+		// template into the repo and force-push, which would overwrite imported code.
+		if strings.TrimSpace(req.Template) != "" {
+			writeErr(w, http.StatusBadRequest, "choose either a template or an existing repository, not both")
+			return
+		}
+		canonical, _, repoName, err := githubpkg.NormalizeRepoURL(req.GitRepoURL)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		repoURL = canonical
+		if req.Name == "" {
+			req.Name = repoName
+		}
+	}
 	if req.Name == "" {
 		writeErr(w, http.StatusBadRequest, "name is required")
 		return
 	}
 
 	p := &Project{
-		Name:     req.Name,
-		Template: req.Template,
+		Name:       req.Name,
+		Template:   req.Template,
+		GitRepoURL: repoURL,
 	}
 	if err := h.store.CreateProject(r.Context(), p); err != nil {
 		if strings.Contains(err.Error(), "already exists") {

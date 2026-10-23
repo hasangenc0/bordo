@@ -12,6 +12,7 @@ func NewBordoToolRegistry(cp *CPClient) *ToolRegistry {
 
 	// Project tools
 	r.Register(projectCreateTool(cp))
+	r.Register(projectEnableBuildsTool(cp))
 	r.Register(projectListTool(cp))
 	r.Register(projectGetTool(cp))
 	r.Register(projectDeleteTool(cp))

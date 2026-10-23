@@ -13,6 +13,7 @@ func NewHandler(store *Store, executor *Executor) http.Handler {
 	r := chi.NewRouter()
 	h := &handler{store: store, executor: executor}
 	r.Post("/", h.trigger)
+	r.Post("/enable", h.enable)
 	r.Get("/", h.list)
 	r.Get("/{id}", h.get)
 	r.Get("/{id}/logs", h.logs)
@@ -111,4 +112,27 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+type enableRequest struct {
+	ProjectID string `json:"project_id"`
+}
+
+// enable adds the Bordo build workflow to an imported project's GitHub repo.
+func (h *handler) enable(w http.ResponseWriter, r *http.Request) {
+	var req enableRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ProjectID == "" {
+		writeErr(w, http.StatusBadRequest, "project_id is required")
+		return
+	}
+	if h.executor == nil {
+		writeErr(w, http.StatusServiceUnavailable, "builds are not available")
+		return
+	}
+	repo, path, err := h.executor.EnableBuilds(r.Context(), req.ProjectID)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": true, "repo": repo, "workflow": path})
 }

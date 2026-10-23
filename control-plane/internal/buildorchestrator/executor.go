@@ -90,6 +90,12 @@ func (e *Executor) run(ctx context.Context, buildID string) error {
 	}
 	_ = e.store.AppendLog(ctx, buildID, "[bordo] build started")
 
+	// A project that points at an existing repo and has no template is imported: its
+	// code already lives on GitHub. It must never be scaffolded into or pushed over.
+	if repoURL := e.resolveRepoURL(ctx, b.ProjectID); repoURL != "" && e.resolveTemplate(ctx, b.ProjectID) == "" {
+		return e.buildImported(ctx, buildID, repoURL)
+	}
+
 	scaffoldDir := filepath.Join(e.workDir, buildID, "src")
 
 	// Step 1: scaffold from template.

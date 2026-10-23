@@ -21,19 +21,62 @@ func templateListTool(cp *CPClient) *Tool {
 
 func projectCreateTool(cp *CPClient) *Tool {
 	return &Tool{
-		Name:        "project_create",
-		Description: "Create a new Bordo project from a golden-path template",
+		Name: "project_create",
+		Description: "Create a Bordo project, either from a golden-path template (pass 'template') " +
+			"or by importing an EXISTING GitHub repository (pass 'repo_url'). Use repo_url whenever the user " +
+			"already has a repo; never scaffold a template over it. They are mutually exclusive. " +
+			"An imported project is built read-only from the repo's latest commit and needs a root Dockerfile " +
+			"and the Bordo build workflow (see project_enable_builds).",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"name":        map[string]any{"type": "string", "description": "Project name (kebab-case)"},
-				"description": map[string]any{"type": "string", "description": "Short description"},
-				"template":    map[string]any{"type": "string", "description": "Template name, e.g. java-web-service"},
+				"name":     map[string]any{"type": "string", "description": "Project name (kebab-case). Optional when repo_url is given: defaults to the repo name"},
+				"template": map[string]any{"type": "string", "description": "Template name, e.g. java-web-service. Omit when importing a repo"},
+				"repo_url": map[string]any{"type": "string", "description": "Existing GitHub repo to import, e.g. https://github.com/owner/repo"},
 			},
-			"required": []string{"name", "template"},
 		},
 		CallFn: func(ctx context.Context, params map[string]any) (any, error) {
-			return cp.Post(ctx, "/v1/projects", params)
+			body := map[string]any{}
+			if v, _ := params["name"].(string); v != "" {
+				body["name"] = v
+			}
+			if v, _ := params["template"].(string); v != "" {
+				body["template"] = v
+			}
+			if v, _ := params["repo_url"].(string); v != "" {
+				// The control plane field is git_repo_url.
+				body["git_repo_url"] = v
+			}
+			if body["template"] == nil && body["git_repo_url"] == nil {
+				return nil, fmt.Errorf("pass either template (new project) or repo_url (existing GitHub repo)")
+			}
+			if body["name"] == nil && body["git_repo_url"] == nil {
+				return nil, fmt.Errorf("name is required")
+			}
+			return cp.Post(ctx, "/v1/projects", body)
+		},
+	}
+}
+
+func projectEnableBuildsTool(cp *CPClient) *Tool {
+	return &Tool{
+		Name: "project_enable_builds",
+		Description: "Add the Bordo build workflow (.github/workflows/bordo-build.yml) to an imported project's GitHub repo. " +
+			"This makes ONE commit on the repo's default branch, so ask the user for permission first and only call it after they agree. " +
+			"Needed when a build of an imported project fails with 'no Bordo build workflow'.",
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"project_id": map[string]any{"type": "string", "description": "Project UUID"},
+			},
+			"required": []string{"project_id"},
+		},
+		CallFn: func(ctx context.Context, params map[string]any) (any, error) {
+			id, _ := params["project_id"].(string)
+			if id == "" {
+				return nil, fmt.Errorf("project_id is required")
+			}
+			return cp.Post(ctx, "/v1/builds/enable", map[string]any{"project_id": id})
 		},
 	}
 }

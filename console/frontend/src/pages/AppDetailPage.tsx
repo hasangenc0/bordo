@@ -174,6 +174,19 @@ function BuildsTab({ project }: { project: Project }) {
   const [log, setLog] = useState('')
   const [starting, setStarting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [confirmEnable, setConfirmEnable] = useState(false)
+  const [enabled, setEnabled] = useState<string | null>(null)
+
+  const enableBuilds = async () => {
+    setError(null)
+    try {
+      const r = await api<{ repo: string; workflow: string }>('/builds/enable', { json: { project_id: project.id } })
+      setEnabled(`Added ${r.workflow} to ${r.repo}. Build again once it has been committed.`)
+      setConfirmEnable(false)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not add the workflow')
+    }
+  }
 
   const start = async () => {
     setStarting(true)
@@ -201,12 +214,30 @@ function BuildsTab({ project }: { project: Project }) {
   }
 
   const list = builds.data ?? []
+  const needsWorkflow = !enabled && !!project.git_repo_url && !project.template && !!list[0]?.error_message?.includes('Bordo build workflow')
   return (
     <div>
       <div className="toolbar">
         <button className="btn btn-primary" onClick={() => void start()} disabled={starting}>{starting ? 'Starting…' : 'Build now'}</button>
       </div>
       {error && <div className="notice notice--error">{error}</div>}
+      {enabled && <div className="notice">{enabled}</div>}
+      {needsWorkflow && (
+        <div className="notice">
+          <strong>This repo has no Bordo build workflow.</strong> Bordo can add <code>.github/workflows/bordo-build.yml</code> with a single
+          commit to the repo's default branch. It won't change your repo unless you agree.
+          <div className="toolbar" style={{ marginTop: 10, marginBottom: 0 }}>
+            {!confirmEnable ? (
+              <button className="btn btn-secondary btn-sm" onClick={() => setConfirmEnable(true)}>Add build workflow…</button>
+            ) : (
+              <>
+                <button className="btn btn-primary btn-sm" onClick={() => void enableBuilds()}>Yes, commit to the default branch</button>
+                <button className="btn btn-secondary btn-sm" onClick={() => setConfirmEnable(false)}>Cancel</button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
       {!builds.loading && list.length === 0 ? (
         <div className="muted">No builds yet.</div>
       ) : (
