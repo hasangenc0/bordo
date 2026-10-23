@@ -504,10 +504,14 @@ func (s *Server) handleFleetStatus(w http.ResponseWriter, r *http.Request) {
 			// Only advance releases still reconciling; never override a release
 			// that was rolled back or superseded in the meantime. Scope to the
 			// reporting region so a token can't touch another region's releases.
+			// "deployed" means the region's reconciler applied the manifests without error. The
+			// pull model does not report pod state back, so say that instead of leaving the log empty.
+			msg := fmt.Sprintf("[bordo] %s: region %s applied the manifests (kubectl apply succeeded). Pod rollout state is not reported back; check the pods on the region host if the app is not reachable.\n",
+				now.Format(time.RFC3339), region)
 			_, _ = s.db.ExecContext(r.Context(),
-				`UPDATE bordo_releases SET status = 'deployed', updated_at = ?
+				`UPDATE bordo_releases SET status = 'deployed', log = ?, updated_at = ?
 				 WHERE id = ? AND region = ? AND status = 'reconciling'`,
-				now, id, region)
+				msg, now, id, region)
 		} else {
 			_, _ = s.db.ExecContext(r.Context(),
 				`UPDATE bordo_releases SET status = 'failed', log = ?, updated_at = ?

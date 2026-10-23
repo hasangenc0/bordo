@@ -492,7 +492,8 @@ func (c *CodeTools) checkout(ctx context.Context, w *ws, params map[string]any) 
 	}
 	base, err := w.defaultBranch(ctx)
 	if err != nil {
-		return nil, err
+		// A freshly created repo has no commits and so no default branch to check out.
+		return nil, errors.New("the repository has no commits yet, so there is nothing to check out. For a template project run build_trigger first: the first build pushes the template scaffold. Then call code_checkout again")
 	}
 	cur, _ := w.currentBranch(ctx)
 

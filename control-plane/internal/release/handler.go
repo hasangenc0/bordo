@@ -2,6 +2,7 @@
 package release
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -57,8 +58,21 @@ type createRequest struct {
 	ExposeHost string   `json:"expose_host"` // hostname for ingress
 }
 
+// resolveProject maps a project UUID or exact name to its UUID. Callers (notably the agent)
+// sometimes pass the name; storing it as project_id orphaned the release from its project.
+func (h *Handler) resolveProject(ctx context.Context, idOrName string) (string, bool) {
+	var id string
+	err := h.db.QueryRowContext(ctx, `SELECT id FROM projects WHERE id = ? OR name = ? LIMIT 1`, idOrName, idOrName).Scan(&id)
+	return id, err == nil
+}
+
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	projectID := r.URL.Query().Get("project_id")
+	if projectID != "" {
+		if id, ok := h.resolveProject(r.Context(), projectID); ok {
+			projectID = id
+		}
+	}
 	var (
 		rows *sql.Rows
 		err  error
@@ -98,6 +112,12 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "project_id and image_tag are required"})
 		return
 	}
+	pid, ok := h.resolveProject(r.Context(), req.ProjectID)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "project not found (use the id or exact name from project_list)"})
+		return
+	}
+	req.ProjectID = pid
 	if req.Strategy == "" {
 		req.Strategy = "rolling"
 	}
@@ -161,7 +181,12 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		 FROM bordo_releases WHERE id = ?`, id)
 	rel, err := scanReleaseRow(row)
 	if err == sql.ErrNoRows {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "release not found"})
+		// A deploy response carries both its release id and a release_group_id; accept the latter too.
+		if h.releaseIDFromGroup(r.Context(), id) != "" {
+			h.GetGroup(w, r.WithContext(context.WithValue(r.Context(), groupKey{}, id)))
+			return
+		}
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "release not found (use the release id, or deploy_group_status for a release_group_id)"})
 		return
 	}
 	if err != nil {
@@ -171,8 +196,22 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, rel)
 }
 
+type groupKey struct{}
+
+// releaseIDFromGroup returns one release id of the group, or "" when groupID is not a group.
+func (h *Handler) releaseIDFromGroup(ctx context.Context, groupID string) string {
+	var id string
+	_ = h.db.QueryRowContext(ctx, `SELECT id FROM bordo_releases WHERE release_group_id = ? LIMIT 1`, groupID).Scan(&id)
+	return id
+}
+
 func (h *Handler) GetLogs(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	// A release_group_id with a single release resolves to that release's log.
+	var n int
+	if _ = h.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM bordo_releases WHERE release_group_id = ?`, id).Scan(&n); n == 1 {
+		id = h.releaseIDFromGroup(r.Context(), id)
+	}
 	var log string
 	err := h.db.QueryRowContext(r.Context(), `SELECT log FROM bordo_releases WHERE id = ?`, id).Scan(&log)
 	if err == sql.ErrNoRows {
@@ -188,6 +227,9 @@ func (h *Handler) GetLogs(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GetGroup(w http.ResponseWriter, r *http.Request) {
 	groupID := chi.URLParam(r, "groupID")
+	if v, ok := r.Context().Value(groupKey{}).(string); ok {
+		groupID = v
+	}
 	rows, err := h.db.QueryContext(r.Context(),
 		`SELECT id, project_id, image_tag, region, strategy, status, release_group_id, created_at, updated_at
 		 FROM bordo_releases WHERE release_group_id = ? ORDER BY created_at DESC`, groupID)

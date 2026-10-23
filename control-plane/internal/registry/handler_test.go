@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -26,8 +27,9 @@ func (f *fakeStore) DeleteProject(context.Context, string) error      { return n
 func (f *fakeStore) GetLatestReleaseInfo(context.Context, string) (string, string, bool, error) {
 	return "", "", false, nil
 }
-func (f *fakeStore) GetEnvVars(context.Context, string) ([]*EnvVar, error) { return nil, nil }
-func (f *fakeStore) SetEnvVars(context.Context, string, []*EnvVar) error   { return nil }
+func (f *fakeStore) HasSuccessfulBuild(context.Context, string) (bool, error) { return false, nil }
+func (f *fakeStore) GetEnvVars(context.Context, string) ([]*EnvVar, error)    { return nil, nil }
+func (f *fakeStore) SetEnvVars(context.Context, string, []*EnvVar) error      { return nil }
 
 func post(t *testing.T, body string) (*httptest.ResponseRecorder, *fakeStore) {
 	t.Helper()
@@ -71,5 +73,40 @@ func TestCreateFromTemplateStillWorks(t *testing.T) {
 	rec, fs := post(t, `{"name":"svc","template":"go-web-service"}`)
 	if rec.Code != http.StatusCreated || fs.created.GitRepoURL != "" {
 		t.Errorf("status %d repo=%q", rec.Code, fs.created.GitRepoURL)
+	}
+}
+
+type statusStore struct {
+	fakeStore
+	releaseStatus string
+	built         bool
+}
+
+func (s *statusStore) GetProject(context.Context, string) (*Project, error) {
+	return &Project{ID: "p1", Name: "x", Status: "pending"}, nil
+}
+func (s *statusStore) GetLatestReleaseInfo(context.Context, string) (string, string, bool, error) {
+	return s.releaseStatus, "eu", s.releaseStatus != "", nil
+}
+func (s *statusStore) HasSuccessfulBuild(context.Context, string) (bool, error) { return s.built, nil }
+
+// The stored status was only ever "pending"; it must follow what happened to the project.
+func TestProjectStatusFollowsBuildsAndReleases(t *testing.T) {
+	for _, tc := range []struct {
+		st   statusStore
+		want string
+	}{
+		{statusStore{}, "pending"},
+		{statusStore{built: true}, "built"},
+		{statusStore{built: true, releaseStatus: "deployed"}, "deployed"},
+	} {
+		st := tc.st
+		w := httptest.NewRecorder()
+		NewHandler(&st).ServeHTTP(w, httptest.NewRequest("GET", "/p1", nil))
+		var got struct{ Status string }
+		_ = json.Unmarshal(w.Body.Bytes(), &got)
+		if got.Status != tc.want {
+			t.Errorf("%+v: status=%q, want %q", tc.st, got.Status, tc.want)
+		}
 	}
 }

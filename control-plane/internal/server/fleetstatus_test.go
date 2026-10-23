@@ -122,3 +122,20 @@ func TestHandleFleetStatusRejectsBadToken(t *testing.T) {
 		t.Fatalf("status code = %d, want 401", w.Code)
 	}
 }
+
+// "deployed" with an empty log left the agent (and the user) guessing; the log must say what happened.
+func TestHandleFleetStatusWritesALogOnSuccess(t *testing.T) {
+	s, db := newStatusTestServer(t)
+	ctx := context.Background()
+	db.Exec(`INSERT INTO regions (id, name, status) VALUES ('reg1','eu-central','pending')`)
+	token, _ := fleet.New(db).IssueClusterToken(ctx, "eu-central")
+	db.Exec(`INSERT INTO bordo_releases (id, project_id, image_tag, region, status) VALUES ('r1','p1','img:1','eu-central','reconciling')`)
+
+	postStatus(s, token, `{"applied_release_ids":["r1"]}`)
+
+	var log string
+	db.QueryRow(`SELECT log FROM bordo_releases WHERE id = 'r1'`).Scan(&log)
+	if statusOf(t, db, "r1") != "deployed" || !strings.Contains(log, "applied the manifests") {
+		t.Errorf("status=%q log=%q", statusOf(t, db, "r1"), log)
+	}
+}

@@ -103,6 +103,16 @@ func (s *sqliteStore) GetLatestReleaseInfo(ctx context.Context, projectID string
 	return status, region, true, nil
 }
 
+func (s *sqliteStore) HasSuccessfulBuild(ctx context.Context, projectID string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM builds WHERE project_id = ? AND status = 'success' AND image_digest <> ''`, projectID).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("has successful build: %w", err)
+	}
+	return n > 0, nil
+}
+
 func (s *sqliteStore) GetEnvVars(ctx context.Context, projectID string) ([]*EnvVar, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT name, value, secret FROM bordo_project_env

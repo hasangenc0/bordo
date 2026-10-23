@@ -83,6 +83,19 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, p)
 }
 
+// liveStatus sets p.Status from what actually happened to the project. The stored column is
+// written once as "pending" and nothing advanced it, so a built and deployed project kept
+// reading "pending" (the agent then reported the platform as out of sync).
+func (h *handler) liveStatus(r *http.Request, p *Project) {
+	if status, _, found, err := h.store.GetLatestReleaseInfo(r.Context(), p.ID); err == nil && found {
+		p.Status = status
+		return
+	}
+	if ok, err := h.store.HasSuccessfulBuild(r.Context(), p.ID); err == nil && ok {
+		p.Status = "built"
+	}
+}
+
 func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 	projects, err := h.store.ListProjects(r.Context())
 	if err != nil {
@@ -93,6 +106,9 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 		projects = []*Project{}
 	}
 
+	for _, p := range projects {
+		h.liveStatus(r, p)
+	}
 	if r.URL.Query().Get("include") == "release_status" {
 		enriched := make([]*ProjectWithStatus, 0, len(projects))
 		for _, p := range projects {
@@ -129,6 +145,7 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.liveStatus(r, p)
 	pws := &ProjectWithStatus{Project: p}
 	status, region, _, _ := h.store.GetLatestReleaseInfo(r.Context(), id)
 	pws.ReleaseStatus = status

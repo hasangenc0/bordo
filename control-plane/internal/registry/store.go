@@ -41,6 +41,8 @@ type Store interface {
 
 	// Release status helpers.
 	GetLatestReleaseInfo(ctx context.Context, projectID string) (status, region string, found bool, err error)
+	// HasSuccessfulBuild reports whether the project has a build that produced an image.
+	HasSuccessfulBuild(ctx context.Context, projectID string) (bool, error)
 
 	// Env var helpers.
 	GetEnvVars(ctx context.Context, projectID string) ([]*EnvVar, error)
