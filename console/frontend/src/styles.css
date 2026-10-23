@@ -246,46 +246,6 @@ html, body, #root {
 .message-text { white-space: pre-wrap; word-break: break-word; }
 
 /* Chat input */
-.chat-input-row {
-  display: flex;
-  gap: 8px;
-  padding: 12px 16px;
-  border-top: 1px solid var(--border);
-  background: var(--bg);
-}
-
-.chat-input {
-  flex: 1;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  color: var(--text);
-  font-family: var(--font);
-  font-size: 14px;
-  padding: 8px 12px;
-  resize: none;
-  outline: none;
-  transition: border-color 0.12s;
-}
-
-.chat-input:focus { border-color: var(--accent); }
-.chat-input::placeholder { color: var(--text-placeholder); }
-.chat-input:disabled { opacity: 0.5; }
-
-.chat-send {
-  background: var(--accent);
-  color: var(--accent-text);
-  border: none;
-  border-radius: var(--radius);
-  padding: 0 20px;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.12s;
-}
-
-.chat-send:hover:not(:disabled) { background: var(--accent-hover); }
-.chat-send:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* Tool cards */
 .tool-card {
@@ -1112,13 +1072,7 @@ a.rail-row:hover { color: var(--accent-hover); text-decoration: underline; }
 @media (max-width: 1200px) { .chat-page { grid-template-columns: 220px minmax(0, 1fr); } .rail--right { display: none; } }
 @media (max-width: 760px) { .chat-page { grid-template-columns: minmax(0, 1fr); } .rail--left { display: none; } }
 
-.chat-pane--page .message-list,
-.chat-pane--page .chat-welcome,
-.chat-pane--page .chat-input-row { width: 100%; max-width: 820px; margin: 0 auto; }
 .chat-pane--page .chat-header { justify-content: center; }
-.chat-pane--page .chat-input-row { padding: 14px 16px 20px; border-top: none; }
-.chat-pane--page .chat-input { padding: 12px 14px; }
-.chat-pane--page .chat-send { padding: 0 22px; }
 .chat-pane--page { background: var(--bg); }
 
 .chat-welcome {
@@ -1133,7 +1087,6 @@ a.rail-row:hover { color: var(--accent-hover); text-decoration: underline; }
 }
 .suggestion:hover:not(:disabled) { border-color: var(--border-strong); background: var(--surface); }
 .suggestion:disabled { opacity: .5; cursor: not-allowed; }
-.chat-input { max-height: 200px; }
 
 /* messages */
 .message-bubble { max-width: 88%; min-width: 0; }

@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import type { Message } from '../types'
 import { MessageList } from './MessageList'
-import { Sparkles } from 'lucide-react'
+import { ArrowUp, Sparkles } from 'lucide-react'
 
 interface Props {
   messages: Message[]
@@ -74,25 +74,39 @@ export function ChatPane({ messages, onSend, connected, busy, chatId, title, var
         <MessageList messages={messages} busy={busy} />
       )}
 
-      <div className="chat-input-row">
-        <textarea
-          ref={textareaRef}
-          className="chat-input"
-          value={draft}
-          onChange={(e) => {
-            setDraft(e.target.value)
-            const el = e.currentTarget
-            el.style.height = 'auto'
-            el.style.height = `${Math.min(el.scrollHeight, 200)}px`
-          }}
-          onKeyDown={handleKeyDown}
-          placeholder={canType ? (variant === 'page' ? 'Ask Bordo…  (Enter to send, Shift+Enter for a new line)' : 'Ask Bordo…') : 'Connecting to agent…'}
-          disabled={!canType}
-          rows={2}
-        />
-        <button className="chat-send" onClick={() => submit()} disabled={!canType || busy || !draft.trim()}>
-          {busy ? 'Working…' : 'Send'}
-        </button>
+      <div className="composer-wrap">
+        <div className="composer">
+          <textarea
+            ref={textareaRef}
+            className="composer-input"
+            value={draft}
+            onChange={(e) => {
+              setDraft(e.target.value)
+              const el = e.currentTarget
+              el.style.height = 'auto'
+              el.style.height = `${Math.min(el.scrollHeight, 200)}px`
+            }}
+            onKeyDown={handleKeyDown}
+            placeholder={canType ? 'Ask Bordo to build, deploy or change something…' : 'Connecting to agent…'}
+            disabled={!canType}
+            rows={1}
+            aria-label="Message Bordo"
+          />
+          <div className="composer-bar">
+            <span className="composer-hint">
+              {busy ? 'Working…' : <><kbd>Enter</kbd> to send · <kbd>Shift</kbd> <kbd>Enter</kbd> for a new line</>}
+            </span>
+            <button
+              type="button"
+              className={`send-btn${busy ? ' send-btn--busy' : ''}`}
+              onClick={() => submit()}
+              disabled={!canType || busy || !draft.trim()}
+              aria-label={busy ? 'Working' : 'Send message'}
+            >
+              {busy ? <span className="spinner spinner--inverse" aria-hidden="true" /> : <ArrowUp size={16} strokeWidth={2.25} aria-hidden="true" />}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   )

@@ -13,6 +13,7 @@ import { ChatPage } from './pages/ChatPage'
 import { ObservePage } from './pages/ObservePage'
 import { RegionsPage } from './pages/RegionsPage'
 import './styles.css'
+import './theme.css'
 import { Circle, Sparkles, X } from 'lucide-react'
 
 const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
