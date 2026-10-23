@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 func regionListTool(cp *CPClient) *Tool {
@@ -24,6 +25,7 @@ func regionAddTool(cp *CPClient) *Tool {
 	return &Tool{
 		Name: "region_add",
 		Description: "Register a new deploy target (region) and mint a one-time join token. " +
+			"If the region already exists, it is kept and a fresh token is minted for it (use this when a token expired). " +
 			"Returns a command the user runs ON the target machine to join the fleet — " +
 			"it installs k3s and connects outbound (no SSH key is ever needed or stored). " +
 			"This is the only way to add a machine; there is no SSH-bootstrap path.",
@@ -39,8 +41,14 @@ func regionAddTool(cp *CPClient) *Tool {
 			if !ok || name == "" {
 				return nil, fmt.Errorf("name is required")
 			}
+			// A region that already exists (e.g. the first join token expired) is not an
+			// error: fall through and mint a fresh token for it.
+			existed := false
 			if _, err := cp.Post(ctx, "/v1/regions", map[string]any{"name": name}); err != nil {
-				return nil, fmt.Errorf("register region: %w", err)
+				if !strings.Contains(err.Error(), " 409 ") {
+					return nil, fmt.Errorf("register region: %w", err)
+				}
+				existed = true
 			}
 			raw, err := cp.Post(ctx, "/v1/regions/"+name+"/join-tokens", map[string]any{})
 			if err != nil {
@@ -55,9 +63,10 @@ func regionAddTool(cp *CPClient) *Tool {
 				"  BORDO_CP_URL=<control-plane-url-reachable-from-the-machine> \\\n" +
 				"  BORDO_JOIN_TOKEN=" + tok.Token + " sh"
 			return map[string]any{
-				"region":       name,
-				"expires_at":   tok.ExpiresAt,
-				"join_command": joinCmd,
+				"already_registered": existed,
+				"region":             name,
+				"expires_at":         tok.ExpiresAt,
+				"join_command":       joinCmd,
 				"instructions": "Tell the user to run join_command ON the target machine. " +
 					"Replace <control-plane-url-reachable-from-the-machine> with the Bordo " +
 					"server's address (e.g. http://<server-ip>:7401). The token is single-use " +

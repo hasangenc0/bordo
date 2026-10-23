@@ -41,6 +41,7 @@ async function load(): Promise<{ views: RegionView[]; names: Record<string, stri
 export function RegionsPage() {
   const res = useFetch(load, [], 10000)
   const [adding, setAdding] = useState(false)
+  const [joining, setJoining] = useState<string | null>(null)
   const views = res.data?.views ?? []
 
   return (
@@ -82,6 +83,11 @@ export function RegionsPage() {
                 </span>
               </div>
             ))}
+            {region.status !== 'healthy' && (
+              <button className="btn btn-secondary btn-sm" style={{ marginTop: 10 }} onClick={() => setJoining(region.name)}>
+                Get join command
+              </button>
+            )}
             <div className="form-label" style={{ marginTop: 12 }}>Apps running</div>
             {deployments.length === 0 ? (
               <div className="muted">Nothing deployed here yet.</div>
@@ -101,6 +107,7 @@ export function RegionsPage() {
       </div>
 
       {adding && <AddRegionModal onClose={() => setAdding(false)} onAdded={() => void res.reload()} />}
+      {joining && <AddRegionModal region={joining} onClose={() => setJoining(null)} onAdded={() => void res.reload()} />}
     </div>
   )
 }
