@@ -32,6 +32,7 @@ func NewBordoToolRegistry(cp *CPClient) *ToolRegistry {
 	r.Register(deployLogsTool(cp))
 	r.Register(rollbackTool(cp))
 	r.Register(appEndpointsTool(cp))
+	r.Register(appProbeTool(cp))
 
 	// Observe tools
 	r.Register(metricsQueryTool(cp))
