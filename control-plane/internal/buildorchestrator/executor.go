@@ -3,6 +3,7 @@ package buildorchestrator
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -144,6 +145,7 @@ func (e *Executor) run(ctx context.Context, buildID string) error {
 func (e *Executor) ensureRepo(ctx context.Context, buildID string, b *Build) string {
 	token, err := e.githubToken(ctx)
 	if err != nil || token == "" {
+		_ = e.store.AppendLog(ctx, buildID, "[error] "+errGitHubNotConnected)
 		return ""
 	}
 	_ = e.store.AppendLog(ctx, buildID, fmt.Sprintf("[bordo] creating GitHub repo %q", b.ImageName))
@@ -157,6 +159,37 @@ func (e *Executor) ensureRepo(ctx context.Context, buildID string, b *Build) str
 	}
 	_ = e.store.AppendLog(ctx, buildID, "[bordo] repo created: "+cloneURL)
 	return cloneURL
+}
+
+const errGitHubNotConnected = "GitHub is not connected, so no repository can be created. Run 'bordo github login' on a machine that can reach bordod, then try again."
+
+// CreateProjectRepo creates the private GitHub repo for a template project without
+// waiting for its first build, and links it to the project. It is idempotent: a
+// project that already has a repo returns it with created=false. Imported projects
+// already point at a repo, so they never reach the create call.
+func (e *Executor) CreateProjectRepo(ctx context.Context, projectID string) (repoURL string, created bool, err error) {
+	var name string
+	if err := e.db.QueryRowContext(ctx, `SELECT name FROM projects WHERE id = ?`, projectID).Scan(&name); err != nil {
+		return "", false, errors.New("project not found")
+	}
+	if existing := e.resolveRepoURL(ctx, projectID); existing != "" {
+		return existing, false, nil
+	}
+	if e.ghStore == nil {
+		return "", false, errors.New(errGitHubNotConnected)
+	}
+	token, terr := e.githubToken(ctx)
+	if terr != nil || token == "" {
+		return "", false, errors.New(errGitHubNotConnected)
+	}
+	cloneURL, err := githubpkg.CreateRepoForUser(ctx, token, name, true)
+	if err != nil {
+		return "", false, fmt.Errorf("creating GitHub repo %q: %w", name, err)
+	}
+	if _, err := e.db.ExecContext(ctx, `UPDATE projects SET git_repo_url = ? WHERE id = ?`, cloneURL, projectID); err != nil {
+		return "", false, fmt.Errorf("repo %s was created but could not be linked to the project: %w", cloneURL, err)
+	}
+	return cloneURL, true, nil
 }
 
 // buildViaGitHubActions pushes the scaffold to GitHub and waits for the workflow.

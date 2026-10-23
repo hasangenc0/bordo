@@ -14,6 +14,7 @@ func NewHandler(store *Store, executor *Executor) http.Handler {
 	h := &handler{store: store, executor: executor}
 	r.Post("/", h.trigger)
 	r.Post("/enable", h.enable)
+	r.Post("/repo", h.createRepo)
 	r.Get("/", h.list)
 	r.Get("/{id}", h.get)
 	r.Get("/{id}/logs", h.logs)
@@ -135,4 +136,23 @@ func (h *handler) enable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"enabled": true, "repo": repo, "workflow": path})
+}
+
+// createRepo creates and links the GitHub repo for a template project.
+func (h *handler) createRepo(w http.ResponseWriter, r *http.Request) {
+	var req enableRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ProjectID == "" {
+		writeErr(w, http.StatusBadRequest, "project_id is required")
+		return
+	}
+	if h.executor == nil {
+		writeErr(w, http.StatusServiceUnavailable, "builds are not available")
+		return
+	}
+	url, created, err := h.executor.CreateProjectRepo(r.Context(), req.ProjectID)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"repo": url, "created": created})
 }

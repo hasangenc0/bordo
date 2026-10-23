@@ -81,6 +81,30 @@ func projectEnableBuildsTool(cp *CPClient) *Tool {
 	}
 }
 
+func projectCreateRepoTool(cp *CPClient) *Tool {
+	return &Tool{
+		Name: "project_create_repo",
+		Description: "Create the private GitHub repository for a template project and link it, without waiting for a build. " +
+			"Use it when a project shows no repo (git_repo_url empty, status pending). Safe to repeat: a project that already has a repo returns it unchanged. " +
+			"Fails with a 'GitHub is not connected' message when `bordo github login` has not been run; relay that to the user. " +
+			"Not for imported projects: they already point at the user's own repo.",
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"project_id": map[string]any{"type": "string", "description": "Project UUID"},
+			},
+			"required": []string{"project_id"},
+		},
+		CallFn: func(ctx context.Context, params map[string]any) (any, error) {
+			id, _ := params["project_id"].(string)
+			if id == "" {
+				return nil, fmt.Errorf("project_id is required")
+			}
+			return cp.Post(ctx, "/v1/builds/repo", map[string]any{"project_id": id})
+		},
+	}
+}
+
 func projectListTool(cp *CPClient) *Tool {
 	return &Tool{
 		Name:        "project_list",

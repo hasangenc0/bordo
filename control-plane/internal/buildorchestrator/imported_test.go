@@ -79,3 +79,26 @@ func TestEnableBuildsRequiresARepo(t *testing.T) {
 		t.Errorf("got %v, want no-repository error", err)
 	}
 }
+
+func TestCreateProjectRepo(t *testing.T) {
+	db := testDB(t)
+	ex := NewExecutor(New(db), db, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir(), "", "", nil)
+	ctx := context.Background()
+
+	// A project that already has a repo is returned as-is, without touching GitHub.
+	linked := addProject(t, db, "linked", "", "https://github.com/acme/linked")
+	url, created, err := ex.CreateProjectRepo(ctx, linked)
+	if err != nil || created || url != "https://github.com/acme/linked" {
+		t.Errorf("linked: url=%q created=%v err=%v", url, created, err)
+	}
+
+	// Without GitHub connected the error says how to fix it.
+	fresh := addProject(t, db, "fresh", "go-web-service", "")
+	if _, _, err := ex.CreateProjectRepo(ctx, fresh); err == nil || !strings.Contains(err.Error(), "bordo github login") {
+		t.Errorf("got %v, want a connect-GitHub error", err)
+	}
+
+	if _, _, err := ex.CreateProjectRepo(ctx, "nope"); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Errorf("got %v, want project not found", err)
+	}
+}
