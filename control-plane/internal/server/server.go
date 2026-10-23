@@ -373,7 +373,10 @@ func (s *Server) handleGithubToken(w http.ResponseWriter, r *http.Request) {
 // run builds in GitHub Actions, and pull private images.
 func (s *Server) handleSetGithubUserToken(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Token string `json:"token"`
+		Token        string `json:"token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int    `json:"expires_in"`
+		ClientID     string `json:"client_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Token == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "token required"})
@@ -384,7 +387,10 @@ func (s *Server) handleSetGithubUserToken(w http.ResponseWriter, r *http.Request
 		return
 	}
 	login, _ := githubpkg.GetCurrentUserLogin(req.Token)
-	if err := s.ghStore.SaveUserToken(r.Context(), req.Token, login, time.Time{}); err != nil {
+	// An expiring token is stored with its refresh token so the login renews itself.
+	if err := s.ghStore.SaveUserSession(r.Context(), githubpkg.UserSession{
+		Token: req.Token, RefreshToken: req.RefreshToken, ClientID: req.ClientID, ExpiresAt: githubpkg.ExpiryFrom(req.ExpiresIn),
+	}); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}

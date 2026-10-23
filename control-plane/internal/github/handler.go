@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"math/rand"
@@ -64,13 +65,17 @@ func (h *Handler) GetInstallationTokenFromStore(ctx context.Context) (string, st
 	// Prefer a user token (device-flow / PAT): it works without a GitHub App,
 	// which is the standard self-hosted path. Only fall through to the App
 	// installation token when no user token is stored.
-	if userToken, expiresAt, uerr := h.store.LoadUserToken(ctx); uerr == nil && userToken != "" {
+	userToken, expiresAt, uerr := h.store.LoadUserToken(ctx)
+	if uerr == nil && userToken != "" {
 		if expiresAt.IsZero() || time.Now().Before(expiresAt) {
 			return userToken, "user", nil
 		}
 	}
 	creds, err := h.store.LoadApp(ctx)
 	if err != nil || creds == nil {
+		if err == nil && errors.Is(uerr, ErrUserTokenExpired) {
+			return "", "", uerr // say the login expired instead of "not configured"
+		}
 		return "", "", err
 	}
 	installID, targetType, _, err := h.store.LoadInstallationID(ctx)
@@ -89,14 +94,10 @@ func (h *Handler) GetInstallationTokenFromStore(ctx context.Context) (string, st
 		_ = targetType
 		return tok, "installation", nil
 	}
-	userToken, expiresAt, err := h.store.LoadUserToken(ctx)
-	if err != nil || userToken == "" {
-		return "", "", err
+	if uerr != nil || userToken == "" {
+		return "", "", uerr
 	}
-	if !expiresAt.IsZero() && time.Now().After(expiresAt) {
-		return "", "", fmt.Errorf("user token expired")
-	}
-	return userToken, "user", nil
+	return "", "", ErrUserTokenExpired
 }
 
 const setupPageHTML = `<!DOCTYPE html>
@@ -164,11 +165,11 @@ func (h *Handler) buildManifest(nonce string) map[string]any {
 			"url":    h.baseURL + "/github/webhook",
 			"active": false,
 		},
-		"redirect_url":     h.baseURL + "/github/app/callback",
-		"callback_urls":    []string{h.baseURL + "/github/app/auth/callback"},
-		"setup_url":        h.baseURL + "/github/app/installed",
-		"setup_on_update":  true,
-		"public":           false,
+		"redirect_url":    h.baseURL + "/github/app/callback",
+		"callback_urls":   []string{h.baseURL + "/github/app/auth/callback"},
+		"setup_url":       h.baseURL + "/github/app/installed",
+		"setup_on_update": true,
+		"public":          false,
 		"default_permissions": map[string]any{
 			"contents":       "write",
 			"metadata":       "read",
@@ -298,13 +299,15 @@ func (h *Handler) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "GitHub App not registered", http.StatusBadRequest)
 		return
 	}
-	token, err := ExchangeOAuthCode(creds.ClientID, creds.ClientSecret, code)
+	tok, err := ExchangeOAuthCode(creds.ClientID, creds.ClientSecret, code)
 	if err != nil {
 		http.Error(w, "OAuth error: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	// GitHub user tokens don't expire by default unless token expiration is enabled on the app.
-	if err := h.store.SaveUserToken(r.Context(), token, "", time.Time{}); err != nil {
+	// GitHub App user tokens expire (~8h); keep the refresh token so the session lasts.
+	if err := h.store.SaveUserSession(r.Context(), UserSession{
+		Token: tok.AccessToken, RefreshToken: tok.RefreshToken, ClientID: creds.ClientID, ExpiresAt: expiryFrom(tok.ExpiresIn),
+	}); err != nil {
 		http.Error(w, "store error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -327,7 +330,7 @@ func (h *Handler) ServeStatus(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	creds, _ := h.store.LoadApp(r.Context())
 	installID, _, _, _ := h.store.LoadInstallationID(r.Context())
-	userToken, _, _ := h.store.LoadUserToken(r.Context())
+	userToken, tokenExpires, tokenErr := h.store.LoadUserToken(r.Context())
 
 	appRegistered := creds != nil && creds.AppID != 0
 	var appID int64
@@ -338,11 +341,13 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"app_registered":  appRegistered,
-		"app_id":          appID,
-		"app_slug":        appSlug,
-		"installation_id": installID,
-		"user_authorized": userToken != "",
+		"app_registered":        appRegistered,
+		"app_id":                appID,
+		"app_slug":              appSlug,
+		"installation_id":       installID,
+		"user_authorized":       userToken != "",
+		"user_token_expires_at": tokenExpires,
+		"user_token_error":      errString(tokenErr),
 	})
 }
 
@@ -373,4 +378,11 @@ func randomString(n int) string {
 		b[i] = chars[r.Intn(len(chars))]
 	}
 	return string(b)
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }

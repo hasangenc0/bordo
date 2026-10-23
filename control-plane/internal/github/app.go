@@ -141,18 +141,44 @@ func CreateRepoForInstallation(ctx context.Context, token, repoName, targetType,
 	return htmlURL, nil
 }
 
+// OAuthToken is the result of a GitHub OAuth token request. ExpiresIn and RefreshToken
+// are set only when the app issues expiring user tokens (GitHub Apps always do).
+type OAuthToken struct {
+	AccessToken  string
+	RefreshToken string
+	ExpiresIn    int
+}
+
+// oauthTokenURL is GitHub's token endpoint; a variable so tests can point it elsewhere.
+var oauthTokenURL = "https://github.com/login/oauth/access_token"
+
 // ExchangeOAuthCode exchanges a GitHub OAuth code for a user access token.
-func ExchangeOAuthCode(clientID, clientSecret, code string) (string, error) {
-	params := url.Values{
+func ExchangeOAuthCode(clientID, clientSecret, code string) (*OAuthToken, error) {
+	return postOAuth(url.Values{
 		"client_id":     {clientID},
 		"client_secret": {clientSecret},
 		"code":          {code},
+	})
+}
+
+// RefreshOAuthToken trades a refresh token for a new access token (and a new refresh
+// token). clientSecret may be empty for public device-flow clients.
+func RefreshOAuthToken(clientID, clientSecret, refreshToken string) (*OAuthToken, error) {
+	params := url.Values{
+		"client_id":     {clientID},
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refreshToken},
 	}
-	req, err := http.NewRequest(http.MethodPost,
-		"https://github.com/login/oauth/access_token",
-		strings.NewReader(params.Encode()))
+	if clientSecret != "" {
+		params.Set("client_secret", clientSecret)
+	}
+	return postOAuth(params)
+}
+
+func postOAuth(params url.Values) (*OAuthToken, error) {
+	req, err := http.NewRequest(http.MethodPost, oauthTokenURL, strings.NewReader(params.Encode()))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -160,25 +186,29 @@ func ExchangeOAuthCode(clientID, clientSecret, code string) (string, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	var result struct {
-		AccessToken string `json:"access_token"`
-		Error       string `json:"error"`
-		ErrorDesc   string `json:"error_description"`
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int    `json:"expires_in"`
+		Error        string `json:"error"`
+		ErrorDesc    string `json:"error_description"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
+		return nil, err
 	}
 	if result.Error != "" {
-		return "", fmt.Errorf("OAuth error: %s — %s", result.Error, result.ErrorDesc)
+		return nil, fmt.Errorf("OAuth error: %s — %s", result.Error, result.ErrorDesc)
 	}
-	return result.AccessToken, nil
+	if result.AccessToken == "" {
+		return nil, fmt.Errorf("OAuth error: no access token in response")
+	}
+	return &OAuthToken{AccessToken: result.AccessToken, RefreshToken: result.RefreshToken, ExpiresIn: result.ExpiresIn}, nil
 }
 
-// CreateRepoForUser creates a repository using a user OAuth token.
 func CreateRepoForUser(ctx context.Context, userToken, repoName string, private bool) (string, error) {
 	return CreateRepoForInstallation(ctx, userToken, repoName, "User", "", private)
 }
@@ -423,4 +453,3 @@ func GetCurrentUserLogin(userToken string) (string, error) {
 	_ = json.NewDecoder(resp.Body).Decode(&result)
 	return result.Login, nil
 }
-

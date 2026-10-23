@@ -78,11 +78,12 @@ func runGithubLogin(ctx context.Context, clientID string) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(expiry)*time.Second)
 	defer cancel()
 
-	token, err := pollDeviceToken(ctx, cid, da.DeviceCode, da.Interval)
+	tok, err := pollDeviceToken(ctx, cid, da.DeviceCode, da.Interval)
 	if err != nil {
 		return err
 	}
-	if err := storeGithubToken(token); err != nil {
+	tok.ClientID = cid
+	if err := storeGithubSession(tok); err != nil {
 		return fmt.Errorf("saving token to server: %w", err)
 	}
 	fmt.Println("\n✓ GitHub connected. Builds will now run in GitHub Actions.")
@@ -149,14 +150,22 @@ func startDeviceFlow(clientID, scope string) (*deviceAuth, error) {
 	return &da, nil
 }
 
-func pollDeviceToken(ctx context.Context, clientID, deviceCode string, interval int) (string, error) {
+// githubSession is a token plus what the server needs to renew it when it expires.
+type githubSession struct {
+	Token        string `json:"token"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	ExpiresIn    int    `json:"expires_in,omitempty"`
+	ClientID     string `json:"client_id,omitempty"`
+}
+
+func pollDeviceToken(ctx context.Context, clientID, deviceCode string, interval int) (*githubSession, error) {
 	if interval <= 0 {
 		interval = 5
 	}
 	for {
 		select {
 		case <-ctx.Done():
-			return "", fmt.Errorf("timed out waiting for authorization — run 'bordo github login' again")
+			return nil, fmt.Errorf("timed out waiting for authorization — run 'bordo github login' again")
 		case <-time.After(time.Duration(interval) * time.Second):
 		}
 		form := url.Values{
@@ -169,18 +178,20 @@ func pollDeviceToken(ctx context.Context, clientID, deviceCode string, interval 
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		var r struct {
-			AccessToken string `json:"access_token"`
-			Error       string `json:"error"`
-			ErrorDesc   string `json:"error_description"`
-			Interval    int    `json:"interval"`
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
+			ExpiresIn    int    `json:"expires_in"`
+			Error        string `json:"error"`
+			ErrorDesc    string `json:"error_description"`
+			Interval     int    `json:"interval"`
 		}
 		_ = json.NewDecoder(resp.Body).Decode(&r)
 		_ = resp.Body.Close()
 		if r.AccessToken != "" {
-			return r.AccessToken, nil
+			return &githubSession{Token: r.AccessToken, RefreshToken: r.RefreshToken, ExpiresIn: r.ExpiresIn}, nil
 		}
 		switch r.Error {
 		case "authorization_pending", "":
@@ -192,17 +203,21 @@ func pollDeviceToken(ctx context.Context, clientID, deviceCode string, interval 
 				interval += 5
 			}
 		case "expired_token":
-			return "", fmt.Errorf("the code expired — run 'bordo github login' again")
+			return nil, fmt.Errorf("the code expired — run 'bordo github login' again")
 		case "access_denied":
-			return "", fmt.Errorf("authorization was denied")
+			return nil, fmt.Errorf("authorization was denied")
 		default:
-			return "", fmt.Errorf("device flow error: %s — %s", r.Error, r.ErrorDesc)
+			return nil, fmt.Errorf("device flow error: %s — %s", r.Error, r.ErrorDesc)
 		}
 	}
 }
 
 // storeGithubToken sends the obtained token to the control plane to persist.
 func storeGithubToken(token string) error {
+	return storeGithubSession(&githubSession{Token: token})
+}
+
+func storeGithubSession(sess *githubSession) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -210,7 +225,7 @@ func storeGithubToken(token string) error {
 	if cfg.Server == "" {
 		return fmt.Errorf("not configured — run 'bordo config set server <url>' first")
 	}
-	body, _ := json.Marshal(map[string]string{"token": token})
+	body, _ := json.Marshal(sess)
 	req, err := http.NewRequest(http.MethodPost, cfg.Server+"/v1/github/user-token", bytes.NewReader(body))
 	if err != nil {
 		return err
