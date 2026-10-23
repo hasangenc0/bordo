@@ -5,12 +5,16 @@ import (
 	"database/sql"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hasangenc0/bordo/control-plane/internal/config"
+	githubpkg "github.com/hasangenc0/bordo/control-plane/internal/github"
 	"github.com/hasangenc0/bordo/control-plane/internal/store"
 )
 
@@ -120,5 +124,63 @@ func TestBuildWithNothingToBuildFails(t *testing.T) {
 	got, _ := bs.Get(context.Background(), b.ID)
 	if got.Status != "failed" || !strings.Contains(got.ErrorMessage, "nothing to build") {
 		t.Errorf("status=%q err=%q, want failed: nothing to build", got.Status, got.ErrorMessage)
+	}
+}
+
+// The reported case: a template project whose repo's default branch is master, whose code was
+// changed after the first build, and whose image the repo's workflow already pushed. The build
+// must read master (never main), leave the repo alone, and record the image of that commit.
+func TestTemplateProjectWithExistingCodeBuildsFromDefaultBranch(t *testing.T) {
+	const sha = "0123456789abcdef0123456789abcdef01234567"
+	var touchedMain, wrote bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/main") {
+			touchedMain = true
+		}
+		if r.Method != http.MethodGet {
+			wrote = true
+		}
+		switch {
+		case r.URL.Path == "/repos/hasangenc0/city-events-api":
+			_, _ = io.WriteString(w, `{"default_branch":"master"}`)
+		case r.URL.Path == "/repos/hasangenc0/city-events-api/commits/master":
+			_, _ = io.WriteString(w, `{"sha":"`+sha+`"}`)
+		case strings.HasPrefix(r.URL.Path, "/repos/hasangenc0/city-events-api/contents/"):
+			_, _ = io.WriteString(w, `{}`)
+		case r.URL.Path == "/repos/hasangenc0/city-events-api/actions/runs":
+			_, _ = io.WriteString(w, `{"workflow_runs":[{"status":"completed","conclusion":"success","html_url":"https://github.com/x/runs/1"}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	defer githubpkg.SetAPIBase(srv.URL)()
+
+	db := testDB(t)
+	gh := githubpkg.NewStore(db, [32]byte{})
+	if err := gh.SaveUserToken(context.Background(), "tok", "", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	bs := New(db)
+	ex := NewExecutor(bs, db, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir(), t.TempDir(), "", gh)
+	pid := addProject(t, db, "city-events-api", "go-web-service", "https://github.com/hasangenc0/city-events-api")
+	b, err := bs.Create(context.Background(), pid, "city-events-api", "latest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ex.run(context.Background(), b.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ := bs.Get(context.Background(), b.ID)
+	want := "ghcr.io/hasangenc0/city-events-api:" + sha
+	if got.Status != "success" || got.ImageDigest != want {
+		t.Errorf("status=%q image=%q err=%q, want success with %s", got.Status, got.ImageDigest, got.ErrorMessage, want)
+	}
+	if touchedMain {
+		t.Error("looked at a branch called main; the default branch is master")
+	}
+	if wrote {
+		t.Error("an existing repo must not be written to when its workflow is already there")
 	}
 }

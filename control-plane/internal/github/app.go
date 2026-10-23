@@ -21,6 +21,13 @@ import (
 // point it at a local server.
 var githubAPIBase = "https://api.github.com"
 
+// SetAPIBase points the package at another API root (tests in other packages) and returns a restore func.
+func SetAPIBase(u string) (restore func()) {
+	old := githubAPIBase
+	githubAPIBase = u
+	return func() { githubAPIBase = old }
+}
+
 // GenerateJWT creates a JWT signed with the app's RSA private key, valid 10 minutes.
 func GenerateJWT(appID int64, privateKeyPEM string) (string, error) {
 	key, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(privateKeyPEM))
