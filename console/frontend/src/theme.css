@@ -297,3 +297,26 @@ input[type='radio'], input[type='checkbox'] { accent-color: var(--accent); }
   .thinking span { animation: none; opacity: 0.6; }
   .spinner { animation-duration: 1.8s; } /* stay visibly alive, just calmer */
 }
+
+/* compact icon buttons (dock header) */
+.icon-btn {
+  position: relative; width: 28px; height: 28px; flex-shrink: 0; display: inline-grid; place-items: center;
+  border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--text-muted); cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.icon-btn:hover { background: rgba(17, 17, 16, 0.06); color: var(--text); }
+.icon-btn[aria-pressed='true'] { background: rgba(17, 17, 16, 0.08); color: var(--text); }
+.icon-btn-dot { position: absolute; top: 5px; right: 5px; width: 6px; height: 6px; border-radius: 50%; background: var(--status-warning); box-shadow: 0 0 0 2px var(--bg); }
+
+/* conversation picker: take the free width, ellipsize long titles */
+.dock-select { flex: 1; min-width: 0; text-overflow: ellipsis; padding-right: 26px; font-weight: 500; }
+.dock-head { gap: 4px; }
+.dock-title { margin-right: 4px; }
+
+/* selects: thin muted chevron instead of the native arrow */
+.select, .dock-select {
+  appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236d6d68' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center; background-size: 12px;
+  padding-right: 28px;
+}

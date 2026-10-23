@@ -14,7 +14,7 @@ import { ObservePage } from './pages/ObservePage'
 import { RegionsPage } from './pages/RegionsPage'
 import './styles.css'
 import './theme.css'
-import { Circle, Sparkles, X } from 'lucide-react'
+import { ListChecks, Plus, Sparkles, X } from 'lucide-react'
 
 const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
 const AGENT_WS_URL =
@@ -226,11 +226,16 @@ function Shell() {
                   <option value="">New conversation</option>
                   {chats.map((c) => <option key={c.id} value={c.id}>{c.title || 'New chat'}</option>)}
                 </select>
-                <button className="btn btn-secondary btn-sm" onClick={() => selectChat(null)} title="Start a new conversation">New</button>
-                <button className="btn btn-secondary btn-sm" onClick={() => setShowActivity((v) => !v)}>
-                  Activity{actionEvents.some((e) => e.status === 'pending') && <Circle size={8} fill="currentColor" style={{ color: 'var(--status-warning)', marginLeft: 4 }} aria-label="pending" />}
+                <button className="icon-btn" onClick={() => selectChat(null)} title="New conversation" aria-label="New conversation">
+                  <Plus size={15} aria-hidden="true" />
                 </button>
-                <button className="btn btn-secondary btn-sm" onClick={toggleDock} aria-label="Hide chat"><X size={14} aria-hidden="true" /></button>
+                <button className="icon-btn" onClick={() => setShowActivity((v) => !v)} title="Agent activity" aria-label="Agent activity" aria-pressed={showActivity}>
+                  <ListChecks size={15} aria-hidden="true" />
+                  {actionEvents.some((e) => e.status === 'pending') && <span className="icon-btn-dot" aria-label="pending approval" />}
+                </button>
+                <button className="icon-btn" onClick={toggleDock} title="Hide chat" aria-label="Hide chat">
+                  <X size={15} aria-hidden="true" />
+                </button>
               </div>
               <ChatPane
                 variant="dock"
