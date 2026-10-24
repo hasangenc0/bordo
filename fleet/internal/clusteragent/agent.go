@@ -97,6 +97,9 @@ type PodInfo struct {
 	Phase  string `json:"phase"`
 	Ready  bool   `json:"ready"`
 	Reason string `json:"reason,omitempty"`
+	// Message is the container's waiting message, e.g. the registry's pull error.
+	Message string `json:"message,omitempty"`
+	Image   string `json:"image,omitempty"` // first container's image, to tell a new rollout from the old pod
 }
 
 // Agent is the on-cluster reconciler.
@@ -311,7 +314,10 @@ func parseObservation(raw []byte) (*Observation, error) {
 				Name string `json:"name"`
 			} `json:"metadata"`
 			Spec struct {
-				Type  string `json:"type"`
+				Type       string `json:"type"`
+				Containers []struct {
+					Image string `json:"image"`
+				} `json:"containers"`
 				Ports []struct {
 					Port     int `json:"port"`
 					NodePort int `json:"nodePort"`
@@ -323,7 +329,8 @@ func parseObservation(raw []byte) (*Observation, error) {
 					Ready bool `json:"ready"`
 					State struct {
 						Waiting *struct {
-							Reason string `json:"reason"`
+							Reason  string `json:"reason"`
+							Message string `json:"message"`
 						} `json:"waiting"`
 						Terminated *struct {
 							Reason string `json:"reason"`
@@ -352,12 +359,16 @@ func parseObservation(raw []byte) (*Observation, error) {
 			obs.Services = append(obs.Services, svc)
 		case "Pod":
 			pod := PodInfo{Name: it.Metadata.Name, Phase: it.Status.Phase, Ready: len(it.Status.ContainerStatuses) > 0}
+			if len(it.Spec.Containers) > 0 {
+				pod.Image = it.Spec.Containers[0].Image
+			}
 			for _, cs := range it.Status.ContainerStatuses {
 				if !cs.Ready {
 					pod.Ready = false
 				}
 				if pod.Reason == "" && cs.State.Waiting != nil {
 					pod.Reason = cs.State.Waiting.Reason
+					pod.Message = truncate(cs.State.Waiting.Message, 400)
 				}
 				if pod.Reason == "" && cs.State.Terminated != nil {
 					pod.Reason = cs.State.Terminated.Reason
@@ -367,4 +378,11 @@ func parseObservation(raw []byte) (*Observation, error) {
 		}
 	}
 	return obs, nil
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }

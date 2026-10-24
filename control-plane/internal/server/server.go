@@ -54,6 +54,10 @@ type Server struct {
 	// re-reports every cycle.
 	workloadsMu sync.RWMutex
 	workloads   map[string]workloadReport
+	// pullNotes records, per region, whether the GHCR pull secret could be shipped on the last
+	// desired-state pull, so a missing or expired GitHub login shows up next to the pod's
+	// ImagePullBackOff instead of staying a guess.
+	pullNotes map[string]string
 }
 
 // workloadReport is a region's reconciler-reported runtime snapshot.
@@ -66,6 +70,8 @@ type workloadReport struct {
 	URLs     []string      `json:"urls,omitempty"`
 	Services []observedSvc `json:"services"`
 	Pods     []observedPod `json:"pods"`
+	// PullSecret says whether the private-image pull secret was shipped to this region.
+	PullSecret string `json:"pull_secret,omitempty"`
 }
 
 type observedSvc struct {
@@ -76,10 +82,12 @@ type observedSvc struct {
 }
 
 type observedPod struct {
-	Name   string `json:"name"`
-	Phase  string `json:"phase"`
-	Ready  bool   `json:"ready"`
-	Reason string `json:"reason,omitempty"`
+	Name    string `json:"name"`
+	Phase   string `json:"phase"`
+	Ready   bool   `json:"ready"`
+	Reason  string `json:"reason,omitempty"`
+	Image   string `json:"image,omitempty"`
+	Message string `json:"message,omitempty"`
 }
 
 // New creates a Server wired with all routes.
@@ -505,11 +513,26 @@ func (s *Server) handleFleetDesiredState(w http.ResponseWriter, r *http.Request)
 	// pull private images. The rendered Deployments already reference
 	// "bordo-registry-creds" for ghcr.io images; here we create that Secret.
 	if owner := firstGHCROwner(manifests); owner != "" {
-		if tok, terr := s.githubHandler.GetScopedPullToken(r.Context()); terr == nil && tok != "" {
+		note := "shipped"
+		tok, terr := s.githubHandler.GetScopedPullToken(r.Context())
+		switch {
+		case terr != nil:
+			note = "NOT shipped: " + terr.Error()
+		case tok == "":
+			note = "NOT shipped: GitHub is not connected (run 'bordo github login')"
+		default:
 			if secret, serr := fleet.RenderImagePullSecret("bordo-apps", "ghcr.io", owner, tok); serr == nil {
 				manifests = secret + "---\n" + manifests
+			} else {
+				note = "NOT shipped: " + serr.Error()
 			}
 		}
+		s.workloadsMu.Lock()
+		if s.pullNotes == nil {
+			s.pullNotes = map[string]string{}
+		}
+		s.pullNotes[region] = note
+		s.workloadsMu.Unlock()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"region": region, "manifests": manifests, "release_ids": releaseIDs})
 }
@@ -655,6 +678,7 @@ func (s *Server) handleFleetWorkloads(w http.ResponseWriter, r *http.Request) {
 	out := make([]workloadReport, 0, len(s.workloads))
 	for name, rep := range s.workloads {
 		if want == "" || want == name {
+			rep.PullSecret = s.pullNotes[name]
 			out = append(out, rep)
 		}
 	}

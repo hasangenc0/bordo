@@ -165,7 +165,7 @@ func appEndpointsTool(cp *CPClient) *Tool {
 	return &Tool{
 		Name: "app_endpoints",
 		Description: "Show what is actually running in a region as reported by its in-cluster reconciler: services with their assigned nodePorts " +
-			"and each pod's state (ready, ImagePullBackOff, CrashLoopBackOff...). Use after a deploy to find the nodePort and to tell 'applied' from 'serving'. " +
+			"and each pod's state (ready, ImagePullBackOff, CrashLoopBackOff... with the container's waiting message, e.g. the registry error) plus pull_secret, which says whether the private-image pull secret was shipped (NOT shipped means the GitHub login is missing or expired). Use after a deploy to find the nodePort and to tell 'applied' from 'serving'. " +
 			"The public URL is http://<region-host-ip>:<node_port>; the control plane does not know the host IP, so ask the user for it if it is not already known.",
 		Schema: map[string]any{
 			"type": "object",

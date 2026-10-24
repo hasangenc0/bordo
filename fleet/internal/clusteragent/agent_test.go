@@ -220,3 +220,14 @@ func TestPublicIPDetection(t *testing.T) {
 		t.Fatalf("detection off but got %q", got)
 	}
 }
+
+func TestParseObservationKeepsPullErrorMessage(t *testing.T) {
+	raw := []byte(`{"items":[{"kind":"Pod","metadata":{"name":"p"},"spec":{"containers":[{"image":"ghcr.io/o/r:1"}]},"status":{"phase":"Pending","containerStatuses":[{"ready":false,"state":{"waiting":{"reason":"ImagePullBackOff","message":"failed to authorize: denied"}}}]}}]}`)
+	obs, err := parseObservation(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := obs.Pods[0]; p.Image != "ghcr.io/o/r:1" || p.Message != "failed to authorize: denied" {
+		t.Fatalf("pod = %+v", p)
+	}
+}
