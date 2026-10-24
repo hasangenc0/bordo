@@ -23,7 +23,7 @@ func DesiredState(ctx context.Context, db *sql.DB, region string) (string, []str
 		`SELECT id, project_id, image_tag, strategy, expose, expose_host
 		 FROM bordo_releases
 		 WHERE region = ? AND status IN ('reconciling','deployed')
-		 ORDER BY project_id, updated_at DESC`, region)
+		 ORDER BY updated_at DESC`, region)
 	if err != nil {
 		return "", nil, err
 	}

@@ -115,3 +115,32 @@ func TestRenderManifestExpose(t *testing.T) {
 		t.Error("none expose should be ClusterIP with no Ingress")
 	}
 }
+
+// A release stored under a truncated project id must not outrank a newer release stored
+// under the full id: the newest release per project wins whatever spelling it was stored with.
+func TestDesiredStateNewestWinsAcrossProjectIDSpellings(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE projects (id TEXT, name TEXT);
+		CREATE TABLE bordo_releases (
+		id TEXT, project_id TEXT, image_tag TEXT, region TEXT,
+		strategy TEXT, status TEXT, expose TEXT DEFAULT 'none', expose_host TEXT DEFAULT '',
+		updated_at DATETIME);
+		INSERT INTO projects VALUES ('6dfbda48-491d-4407-9f7a-b2783d32ccd3','city-events-api');
+		INSERT INTO bordo_releases (id, project_id, image_tag, region, strategy, status, updated_at) VALUES
+		('old','6dfbda48','ghcr.io/x/a:old','eu','rolling','deployed','2026-10-23T10:00:00Z'),
+		('new','6dfbda48-491d-4407-9f7a-b2783d32ccd3','ghcr.io/x/a:new','eu','rolling','reconciling','2026-10-24T10:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	ds, ids, err := DesiredState(context.Background(), db, "eu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 1 || ids[0] != "new" || !strings.Contains(ds, "ghcr.io/x/a:new") || strings.Contains(ds, "a:old") {
+		t.Fatalf("ids = %v, manifest = %q", ids, ds)
+	}
+}
