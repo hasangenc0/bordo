@@ -75,6 +75,15 @@ func (h *handler) trigger(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 	projectID := r.URL.Query().Get("project_id")
+	if projectID != "" {
+		// The agent passes names or truncated ids; map them to the project's id.
+		var id string
+		if err := h.store.db.QueryRowContext(r.Context(),
+			`SELECT id FROM projects WHERE id = ? OR name = ? OR id LIKE ? ORDER BY (id = ?) DESC LIMIT 1`,
+			projectID, projectID, projectID+"%", projectID).Scan(&id); err == nil {
+			projectID = id
+		}
+	}
 	builds, err := h.store.ListByProject(r.Context(), projectID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal error")

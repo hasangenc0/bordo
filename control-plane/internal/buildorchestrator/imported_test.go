@@ -147,7 +147,7 @@ func TestTemplateProjectWithExistingCodeBuildsFromDefaultBranch(t *testing.T) {
 			_, _ = io.WriteString(w, `{"sha":"`+sha+`"}`)
 		case strings.HasPrefix(r.URL.Path, "/repos/hasangenc0/city-events-api/contents/"):
 			_, _ = io.WriteString(w, `{}`)
-		case r.URL.Path == "/repos/hasangenc0/city-events-api/actions/runs":
+		case r.URL.Path == "/repos/hasangenc0/city-events-api/actions/workflows/bordo-build.yml/runs":
 			_, _ = io.WriteString(w, `{"workflow_runs":[{"status":"completed","conclusion":"success","html_url":"https://github.com/x/runs/1"}]}`)
 		default:
 			http.NotFound(w, r)

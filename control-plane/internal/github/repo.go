@@ -111,7 +111,9 @@ func FindRun(ctx context.Context, token, owner, repo, sha string) (*WorkflowRun,
 	var res struct {
 		WorkflowRuns []WorkflowRun `json:"workflow_runs"`
 	}
-	u := fmt.Sprintf("%s/repos/%s/%s/actions/runs?head_sha=%s&per_page=1", githubAPIBase, owner, repo, url.QueryEscape(sha))
+	// Scoped to the Bordo workflow: an unrelated workflow (CI, lint) sharing the commit must
+	// not be mistaken for the image build.
+	u := fmt.Sprintf("%s/repos/%s/%s/actions/workflows/%s/runs?head_sha=%s&per_page=1", githubAPIBase, owner, repo, BuildWorkflowFile, url.QueryEscape(sha))
 	code, err := ghDo(ctx, token, http.MethodGet, u, nil, &res)
 	if err != nil {
 		return nil, err
@@ -134,6 +136,7 @@ func AwaitRunForCommit(ctx context.Context, token, owner, repo, sha, branch stri
 		logf = func(string) {}
 	}
 	start := time.Now()
+	lastLog := start
 	dispatched := false
 	for {
 		run, err := FindRun(ctx, token, owner, repo, sha)
@@ -149,6 +152,14 @@ func AwaitRunForCommit(ctx context.Context, token, owner, repo, sha, branch stri
 				return nil, err
 			}
 			dispatched = true
+		}
+		if time.Since(lastLog) >= time.Minute {
+			lastLog = time.Now()
+			if run == nil {
+				logf(fmt.Sprintf("still waiting for a build run for %s (%s)", sha[:8], time.Since(start).Round(time.Second)))
+			} else {
+				logf(fmt.Sprintf("workflow run is %s (%s)", run.Status, time.Since(start).Round(time.Second)))
+			}
 		}
 		select {
 		case <-ctx.Done():

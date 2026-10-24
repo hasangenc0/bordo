@@ -77,8 +77,34 @@ func (e *Executor) Execute(buildID string) {
 		defer cancel()
 		if err := e.run(ctx, buildID); err != nil {
 			e.logger.Error("build failed", "id", buildID, "err", err)
+			// ctx may already be expired (the 30 minute limit); settle the record on a fresh one
+			// so the build never stays "running" with nobody working on it.
+			sctx, scancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer scancel()
+			_ = e.store.AppendLog(sctx, buildID, "[error] "+err.Error())
+			_ = e.store.FailIfRunning(sctx, buildID, err.Error())
 		}
 	}()
+}
+
+// ResumeInterrupted picks up builds left "running" by a restart of the control plane (their
+// goroutine died with it). Recent ones are resumed: building an imported repo only polls
+// GitHub, so it is safe to repeat. Ones older than the build time limit are failed.
+func (e *Executor) ResumeInterrupted(ctx context.Context) {
+	running, err := e.store.RunningBuilds(ctx)
+	if err != nil {
+		e.logger.Warn("resume builds: list running", "err", err)
+		return
+	}
+	for id, started := range running {
+		if time.Since(started) > 30*time.Minute {
+			_ = e.store.AppendLog(ctx, id, "[error] the build was interrupted by a control-plane restart and is too old to resume; build again")
+			_ = e.store.FailIfRunning(ctx, id, "interrupted by a control-plane restart")
+			continue
+		}
+		_ = e.store.AppendLog(ctx, id, "[bordo] control plane restarted; resuming this build")
+		e.Execute(id)
+	}
 }
 
 func (e *Executor) run(ctx context.Context, buildID string) error {

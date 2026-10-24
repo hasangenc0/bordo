@@ -267,6 +267,7 @@ func (s *Server) registerRoutes() {
 		r.Mount("/regions", fleet.NewHandler(fleet.New(s.db), s.logger))
 		buildStore := buildorchestrator.New(s.db)
 		buildExecutor := buildorchestrator.NewExecutor(buildStore, s.db, s.logger, "", "", "", s.ghStore)
+		go buildExecutor.ResumeInterrupted(context.Background())
 		r.Mount("/builds", buildorchestrator.NewHandler(buildStore, buildExecutor))
 		r.Mount("/releases", release.NewHandler(s.db))
 

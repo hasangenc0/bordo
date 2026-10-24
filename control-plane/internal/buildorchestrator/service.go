@@ -86,10 +86,17 @@ func (s *Store) Get(ctx context.Context, id string) (*Build, error) {
 
 // ListByProject returns all builds for a project, newest first.
 func (s *Store) ListByProject(ctx context.Context, projectID string) ([]*Build, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, project_id, status, image_name, image_tag, image_digest, error_message,
-		        started_at, completed_at, created_at
-		 FROM builds WHERE project_id = ? ORDER BY created_at DESC`, projectID)
+	const cols = `SELECT id, project_id, status, image_name, image_tag, image_digest, error_message,
+		        started_at, completed_at, created_at FROM builds`
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if projectID == "" { // no filter: the most recent builds across projects
+		rows, err = s.db.QueryContext(ctx, cols+` ORDER BY created_at DESC LIMIT 100`)
+	} else {
+		rows, err = s.db.QueryContext(ctx, cols+` WHERE project_id = ? ORDER BY created_at DESC`, projectID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -177,4 +184,37 @@ func (b *Build) ImageRef(registryURL string) string {
 		ref = registryURL + "/" + ref
 	}
 	return ref
+}
+
+// FailIfRunning marks a build failed only if it is still running, so a timed-out or
+// interrupted build never stays "running" forever. It never overwrites a finished build.
+func (s *Store) FailIfRunning(ctx context.Context, id, msg string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE builds SET status='failed', error_message=?, completed_at=? WHERE id=? AND status='running'`,
+		msg, time.Now().UTC(), id)
+	return err
+}
+
+// RunningBuilds lists builds recorded as running with their start time.
+func (s *Store) RunningBuilds(ctx context.Context) (map[string]time.Time, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, started_at, created_at FROM builds WHERE status='running'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]time.Time{}
+	for rows.Next() {
+		var id string
+		var started sql.NullTime
+		var created time.Time
+		if err := rows.Scan(&id, &started, &created); err != nil {
+			return nil, err
+		}
+		if started.Valid {
+			out[id] = started.Time
+		} else {
+			out[id] = created
+		}
+	}
+	return out, rows.Err()
 }

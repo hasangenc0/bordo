@@ -82,7 +82,7 @@ func TestAwaitRunDispatchesWhenNoRunAppears(t *testing.T) {
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/workflows/bordo-build.yml/dispatches"):
 			dispatched.Add(1)
 			w.WriteHeader(http.StatusNoContent)
-		case strings.HasSuffix(r.URL.Path, "/actions/runs"):
+		case strings.HasSuffix(r.URL.Path, "/runs"):
 			// no run until the workflow has been dispatched, then in-progress, then done
 			switch {
 			case dispatched.Load() == 0:
