@@ -34,6 +34,7 @@ func NewBordoToolRegistry(cp *CPClient) *ToolRegistry {
 	r.Register(deployWaitTool(cp))
 	r.Register(appEndpointsTool(cp))
 	r.Register(appProbeTool(cp))
+	r.Register(httpFetchTool())
 
 	// Observe tools
 	r.Register(metricsQueryTool(cp))
