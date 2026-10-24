@@ -51,3 +51,29 @@ func TestGetScopedInstallationTokenSendsPermissions(t *testing.T) {
 		t.Fatalf("permissions = %+v, want packages:read", parsed.Permissions)
 	}
 }
+
+func TestPullTokenProblem(t *testing.T) {
+	if PullTokenProblem("ghu_abc") == "" {
+		t.Error("GitHub App user tokens must be flagged")
+	}
+	if PullTokenProblem("github_pat_abc") == "" {
+		t.Error("fine-grained PATs must be flagged")
+	}
+	for scopes, wantProblem := range map[string]bool{
+		"repo, workflow, write:packages":                true,
+		"repo, workflow, write:packages, read:packages": false,
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-OAuth-Scopes", scopes)
+			_, _ = w.Write([]byte(`{"login":"u"}`))
+		}))
+		old := githubAPIBase
+		githubAPIBase = srv.URL
+		got := PullTokenProblem("gho_x") != ""
+		githubAPIBase = old
+		srv.Close()
+		if got != wantProblem {
+			t.Errorf("scopes %q: problem=%v, want %v", scopes, got, wantProblem)
+		}
+	}
+}

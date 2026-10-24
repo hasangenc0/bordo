@@ -453,3 +453,37 @@ func GetCurrentUserLogin(userToken string) (string, error) {
 	_ = json.NewDecoder(resp.Body).Decode(&result)
 	return result.Login, nil
 }
+
+// PullTokenProblem says why token cannot pull private images from ghcr.io, or "" if it looks
+// fine. GHCR accepts only classic tokens (PAT or OAuth) with the read:packages scope: GitHub
+// App user tokens and fine-grained PATs are refused with 403 even for your own packages, and a
+// classic token without the scope is refused the same way. Best effort: any error means "".
+func PullTokenProblem(token string) string {
+	switch {
+	case strings.HasPrefix(token, "ghu_"):
+		return "this is a GitHub App user token, which ghcr.io rejects (403). Log in with an OAuth App (BORDO_GITHUB_CLIENT_ID) or connect a classic personal access token with read:packages"
+	case strings.HasPrefix(token, "github_pat_"):
+		return "fine-grained personal access tokens cannot read ghcr.io packages. Use a classic token with the read:packages scope (bordo github connect)"
+	}
+	req, err := http.NewRequest(http.MethodGet, githubAPIBase+"/user", nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	header := resp.Header.Get("X-OAuth-Scopes")
+	if resp.StatusCode != http.StatusOK || header == "" {
+		return ""
+	}
+	for _, sc := range strings.Split(header, ",") {
+		if strings.TrimSpace(sc) == "read:packages" {
+			return ""
+		}
+	}
+	return "the token has scopes [" + header + "] but ghcr.io needs read:packages to pull private images. Log in again (the login now asks for it) or create a classic token with read:packages"
+}

@@ -403,7 +403,11 @@ func (s *Server) handleSetGithubUserToken(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "connected", "login": login})
+	resp := map[string]string{"status": "connected", "login": login}
+	if problem := githubpkg.PullTokenProblem(req.Token); problem != "" {
+		resp["warning"] = "private image pulls will fail: " + problem
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleFleetRedeem consumes a single-use node-join token (ADR-0006 Phase 1).

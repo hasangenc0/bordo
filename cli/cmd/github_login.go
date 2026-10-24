@@ -23,7 +23,7 @@ const defaultGitHubClientID = ""
 
 // githubScopes are the OAuth scopes Bordo needs: create/push repos, manage the
 // build workflow, and push/pull GHCR images.
-const githubScopes = "repo workflow write:packages"
+const githubScopes = "repo workflow write:packages read:packages"
 
 func githubLoginCmd() *cobra.Command {
 	var clientID string
@@ -243,6 +243,10 @@ func storeGithubSession(sess *githubSession) error {
 		var e map[string]string
 		_ = json.NewDecoder(resp.Body).Decode(&e)
 		return fmt.Errorf("server returned %d: %s", resp.StatusCode, e["error"])
+	}
+	var ok map[string]string
+	if json.NewDecoder(resp.Body).Decode(&ok) == nil && ok["warning"] != "" {
+		fmt.Fprintf(os.Stderr, "\n⚠ %s\n", ok["warning"])
 	}
 	return nil
 }
