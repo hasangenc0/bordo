@@ -111,6 +111,15 @@ func rolloutState(status, image, region string, workloads []byte) (bool, map[str
 			continue
 		}
 		state["reported_at"] = r.ReportedAt
+		for _, p := range r.Pods {
+			if p.Image == "" {
+				// An outdated reconciler cannot tell the new pod from the old one, so a ready pod
+				// proves nothing about this release. Say so instead of waiting forever.
+				state["outcome"] = "unknown"
+				state["note"] = "the region's reconciler is outdated and does not report pod images, so this rollout cannot be verified; restart it (kubectl -n bordo-system rollout restart deployment/bordo-reconciler) after bordo upgrade"
+				return true, state
+			}
+		}
 		if r.PullSecret != "" {
 			state["pull_secret"] = r.PullSecret
 		}

@@ -35,3 +35,11 @@ func TestRolloutState(t *testing.T) {
 		t.Fatal("no workload report yet must keep waiting")
 	}
 }
+
+func TestRolloutStateOutdatedReconciler(t *testing.T) {
+	old := []byte(`{"regions":[{"region":"eu","pods":[{"name":"a","ready":true}]}]}`)
+	done, st := rolloutState("deployed", "img:new", "eu", old)
+	if !done || st["outcome"] != "unknown" {
+		t.Fatalf("pods without images must not read as serving or waiting forever: done=%v %v", done, st)
+	}
+}
