@@ -4,19 +4,26 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"regexp"
+	"strings"
 	"time"
 )
 
 const (
 	defaultLLMURL   = "https://api.deepseek.com/chat/completions"
 	defaultLLMModel = "deepseek-chat"
-	maxIterations   = 25
-	maxToolOutput   = 30 * 1024
-	systemPrompt    = "You are the Bordo platform assistant. You help users manage their software factory: create projects, trigger builds, deploy services, and query observability data. Use the available tools to take actions on behalf of the user.\n\n" +
+	maxIterations   = 60
+	// maxNudges bounds how often one turn is pushed to keep going after the model stopped early.
+	maxNudges = 3
+	// maxLLMAttempts is tries per model call; a 429/5xx or a dropped connection is retried.
+	maxLLMAttempts = 3
+	maxToolOutput  = 30 * 1024
+	systemPrompt   = "You are the Bordo platform assistant. You help users manage their software factory: create projects, trigger builds, deploy services, and query observability data. Use the available tools to take actions on behalf of the user.\n\n" +
 		"Platform operations knowledge:\n" +
 		"- Bordo builds container images in GitHub Actions, NOT with a local Docker daemon. The bordod host intentionally has no `docker` binary, so never diagnose a missing Docker install as the problem and never advise installing Docker on the server.\n" +
 		"- If a build fails with a docker-not-found, 'docker build failed to start', or 'no container builder' error, the real cause is that GitHub is not connected. Advise the user to run `bordo github login` (GitHub device flow) so builds run in GitHub Actions.\n" +
@@ -143,7 +150,7 @@ func NewAnthropicClient(apiKey string) *AnthropicClient {
 		Token:  token,
 		Model:  model,
 		APIURL: apiURL,
-		http:   &http.Client{Timeout: 60 * time.Second},
+		http:   &http.Client{Timeout: 120 * time.Second},
 	}
 }
 
@@ -182,25 +189,37 @@ func (c *AnthropicClient) RunAgentLoop(
 	}
 
 	var fullText string
+	nudges := 0
+	finished := false
 	for i := 0; i < maxIterations; i++ {
 		resp, err := c.callAPI(ctx, oaiMsgs, oaiTools)
 		if err != nil {
 			return fullText, err
 		}
 		if len(resp.Choices) == 0 {
+			// An empty answer is not a finished turn; say so instead of going quiet.
+			emit(onText, &fullText, "\n\n(The model returned an empty answer. Say \"continue\" to try again.)")
+			finished = true
 			break
 		}
 		choice := resp.Choices[0]
 		msg := choice.Message
 
 		if msg.Content != "" {
-			fullText += msg.Content
-			if onText != nil {
-				onText(msg.Content)
-			}
+			emit(onText, &fullText, msg.Content)
 		}
 
-		if choice.FinishReason == "stop" || choice.FinishReason == "" || len(msg.ToolCalls) == 0 {
+		if len(msg.ToolCalls) == 0 {
+			// The model ended its turn without calling a tool. That is normal when it is done, but
+			// models also stop mid-task: cut off by the token limit, or after announcing the next
+			// step ("Let me check...") without taking it. Push on instead of making the user type
+			// "continue".
+			if nudges < maxNudges && stoppedEarly(choice.FinishReason, msg.Content) {
+				nudges++
+				oaiMsgs = append(oaiMsgs, msg, oaiMessage{Role: "user", Content: "Continue. If you stopped because you need something from me, say exactly what; otherwise carry out the step you just described with the tools and finish the task."})
+				continue
+			}
+			finished = true
 			break
 		}
 
@@ -232,13 +251,90 @@ func (c *AnthropicClient) RunAgentLoop(
 			})
 		}
 	}
+	if !finished {
+		emit(onText, &fullText, fmt.Sprintf("\n\n(I reached my limit of %d steps for one turn. Say \"continue\" and I will carry on.)", maxIterations))
+	}
 	return fullText, nil
 }
 
+// emit streams text to the caller and accumulates it.
+func emit(onText func(string), full *string, text string) {
+	*full += text
+	if onText != nil {
+		onText(text)
+	}
+}
+
+// intentRe matches a closing sentence that promises an action rather than reporting a result.
+var intentRe = regexp.MustCompile(`(?i)(let me|i'll|i will|i'm going to|i am going to|next,? i|now i'll|now let me|first,? let me)\b[^.!?]*[:.…]?\s*$`)
+
+// stoppedEarly reports whether a tool-less answer looks like an interrupted turn rather than a
+// finished one: the model hit its token limit, or its last words announce an action.
+func stoppedEarly(finishReason, content string) bool {
+	if finishReason == "length" {
+		return true
+	}
+	t := strings.TrimSpace(content)
+	if t == "" {
+		return false // nothing said at all: let the caller report the empty answer
+	}
+	last := t
+	if len(last) > 300 {
+		last = last[len(last)-300:]
+	}
+	if strings.HasSuffix(t, ":") {
+		return true
+	}
+	return intentRe.MatchString(last) && !strings.HasSuffix(t, "?")
+}
+
+// callAPI calls the model, retrying the failures that are worth a retry: a rate limit, a server
+// error or a dropped connection. A slow or flaky provider otherwise ended the turn mid-task.
 func (c *AnthropicClient) callAPI(ctx context.Context, msgs []oaiMessage, tools []oaiTool) (*oaiResponse, error) {
+	var lastErr error
+	for attempt := 0; attempt < maxLLMAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Duration(attempt) * llmRetryDelay):
+			}
+		}
+		resp, err := c.callAPIOnce(ctx, msgs, tools)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if !retryable(err) {
+			break
+		}
+	}
+	return nil, lastErr
+}
+
+// llmRetryDelay is the base wait between attempts (a variable so tests can shorten it).
+var llmRetryDelay = 2 * time.Second
+
+func retryable(err error) bool {
+	var apiErr *llmStatusError
+	if errors.As(err, &apiErr) {
+		return apiErr.status == http.StatusTooManyRequests || apiErr.status >= 500
+	}
+	// Transport trouble (timeout, reset connection); not a cancelled request.
+	return !errors.Is(err, context.Canceled)
+}
+
+type llmStatusError struct {
+	status int
+	body   string
+}
+
+func (e *llmStatusError) Error() string { return fmt.Sprintf("LLM API %d: %s", e.status, e.body) }
+
+func (c *AnthropicClient) callAPIOnce(ctx context.Context, msgs []oaiMessage, tools []oaiTool) (*oaiResponse, error) {
 	body := oaiRequest{
 		Model:     c.Model,
-		MaxTokens: 4096,
+		MaxTokens: 8192,
 		Messages:  msgs,
 		Tools:     tools,
 	}
@@ -266,7 +362,7 @@ func (c *AnthropicClient) callAPI(ctx context.Context, msgs []oaiMessage, tools 
 		return nil, fmt.Errorf("reading LLM response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("LLM API %d: %s", resp.StatusCode, string(raw))
+		return nil, &llmStatusError{status: resp.StatusCode, body: string(raw)}
 	}
 	var result oaiResponse
 	if err := json.Unmarshal(raw, &result); err != nil {

@@ -345,6 +345,15 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		if loopErr != nil {
 			s.logger.Error("agent loop error", "error", loopErr)
 			_ = sendFrame(WSFrame{Type: "error", Content: "model error: " + loopErr.Error()})
+			// Keep what was said before the failure: the next message ("continue") otherwise starts
+			// from a history that lacks the work the user just watched happen.
+			if fullReply != "" {
+				partial := fullReply + "\n\n(interrupted by a model error; the user may ask to continue)"
+				session.AddMessage("assistant", partial)
+				if chatID != "" && s.chats != nil {
+					_ = s.chats.AppendMessage(r.Context(), chatID, "assistant", partial)
+				}
+			}
 			_ = sendFrame(WSFrame{Type: "done"})
 			continue
 		}
