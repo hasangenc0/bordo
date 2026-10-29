@@ -1,8 +1,11 @@
 package buildorchestrator
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -89,10 +92,11 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if builds == nil {
-		builds = []*Build{}
+	views := make([]buildView, 0, len(builds))
+	for _, b := range builds {
+		views = append(views, h.view(r.Context(), b))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"builds": builds})
+	writeJSON(w, http.StatusOK, map[string]any{"builds": views})
 }
 
 func (h *handler) get(w http.ResponseWriter, r *http.Request) {
@@ -102,7 +106,7 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "build not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, b)
+	writeJSON(w, http.StatusOK, h.view(r.Context(), b))
 }
 
 func (h *handler) logs(w http.ResponseWriter, r *http.Request) {
@@ -116,6 +120,35 @@ func (h *handler) logs(w http.ResponseWriter, r *http.Request) {
 		lines = []string{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"lines": lines})
+}
+
+// buildView is a build plus a warning when it produced nothing new.
+type buildView struct {
+	*Build
+	Warning string `json:"warning,omitempty"`
+}
+
+// view flags a successful build whose image is identical to an earlier build's. The image is named
+// after the commit, so that means the default branch has not moved: a merge that "didn't build"
+// usually never reached it, and calling the old image a fresh build misleads whoever deploys it.
+func (h *handler) view(ctx context.Context, b *Build) buildView {
+	v := buildView{Build: b}
+	if b.Status != "success" || b.ImageDigest == "" {
+		return v
+	}
+	var prev string
+	var at time.Time
+	err := h.store.db.QueryRowContext(ctx,
+		`SELECT id, created_at FROM builds
+		 WHERE project_id = ? AND status = 'success' AND image_digest = ? AND id != ? AND created_at < ?
+		 ORDER BY created_at DESC LIMIT 1`,
+		b.ProjectID, b.ImageDigest, b.ID, b.CreatedAt).Scan(&prev, &at)
+	if err == nil {
+		v.Warning = fmt.Sprintf("This is the same image as the earlier build %s (%s): the default branch has not moved since, "+
+			"so none of the changes made after that commit are in it. If a pull request was merged, check that it actually "+
+			"landed on the default branch (code_pr_status) before deploying this.", prev, at.UTC().Format(time.RFC3339))
+	}
+	return v
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
