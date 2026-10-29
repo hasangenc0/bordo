@@ -474,7 +474,7 @@ func (c *CodeTools) Tools() []*Tool {
 		c.mergeTool(),
 		c.tool("code_pr_status",
 			"Check a pull request's state: open, closed or merged, and whether the default branch has the merge. Use it after the user says a PR was merged, before building: a build only picks up code that is on the default branch.",
-			map[string]any{"number": prop("integer", "Pull request number")}, []string{"number"}, c.prStatus),
+			map[string]any{"number": prop("integer", "Pull request number. Omit to list the repository's most recent pull requests with their state.")}, nil, c.prStatus),
 	}
 	if u := os.Getenv("BORDO_SANDBOX_URL"); u != "" {
 		tools = append(tools, c.execTool(u))
@@ -556,7 +556,7 @@ func (c *CodeTools) mergePR(ctx context.Context, w *ws, params map[string]any) (
 func (c *CodeTools) prStatus(ctx context.Context, w *ws, params map[string]any) (any, error) {
 	n := intParam(params, "number")
 	if n <= 0 {
-		return nil, errors.New("number is required")
+		return c.recentPRs(ctx, w)
 	}
 	var pr struct {
 		State          string `json:"state"`
@@ -602,6 +602,33 @@ func (c *CodeTools) prStatus(ctx context.Context, w *ws, params map[string]any) 
 		out["next"] = "merged: a build of the default branch now includes this change"
 	}
 	return out, nil
+}
+
+// recentPRs lists the latest pull requests so "is it merged?" works without knowing the number.
+func (c *CodeTools) recentPRs(ctx context.Context, w *ws) (any, error) {
+	var prs []struct {
+		Number   int    `json:"number"`
+		Title    string `json:"title"`
+		State    string `json:"state"`
+		MergedAt string `json:"merged_at"`
+		HTMLURL  string `json:"html_url"`
+		Head     struct {
+			Ref string `json:"ref"`
+		} `json:"head"`
+	}
+	u := fmt.Sprintf("%s/repos/%s/%s/pulls?state=all&sort=updated&direction=desc&per_page=8", c.apiBase, w.owner, w.repo)
+	if err := c.githubJSON(ctx, w.token, http.MethodGet, u, nil, &prs); err != nil {
+		return nil, err
+	}
+	out := make([]map[string]any, 0, len(prs))
+	for _, p := range prs {
+		state := p.State
+		if p.MergedAt != "" {
+			state = "merged"
+		}
+		out = append(out, map[string]any{"number": p.Number, "title": p.Title, "state": state, "branch": p.Head.Ref, "url": p.HTMLURL})
+	}
+	return map[string]any{"pull_requests": out, "next": "call code_pr_status with a number for details on one"}, nil
 }
 
 // githubJSON performs an authenticated GitHub API call and decodes the JSON response.

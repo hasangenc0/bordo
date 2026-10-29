@@ -493,3 +493,25 @@ func TestPRStatus(t *testing.T) {
 		t.Fatalf("merged PR: %v", m)
 	}
 }
+
+func TestPRStatusWithoutNumberListsRecent(t *testing.T) {
+	c, _ := setup(t)
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/acme/app/pulls" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`[{"number":3,"title":"fix","state":"closed","merged_at":"2026-10-29T10:00:00Z","head":{"ref":"bordo/change-1"}},{"number":2,"title":"wip","state":"open","merged_at":null,"head":{"ref":"x"}}]`))
+	}))
+	defer gh.Close()
+	c.apiBase = gh.URL
+
+	res, err := call(t, c, "code_pr_status", map[string]any{"project": "p-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := res.(map[string]any)["pull_requests"].([]map[string]any)
+	if len(list) != 2 || list[0]["state"] != "merged" || list[1]["state"] != "open" {
+		t.Fatalf("recent PRs = %v", list)
+	}
+}
