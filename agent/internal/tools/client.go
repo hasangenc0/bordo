@@ -33,6 +33,10 @@ func (c *CPClient) Get(ctx context.Context, path string) (json.RawMessage, error
 	return c.do(ctx, http.MethodGet, path, nil)
 }
 
+func (c *CPClient) Put(ctx context.Context, path string, body any) (json.RawMessage, error) {
+	return c.do(ctx, http.MethodPut, path, body)
+}
+
 func (c *CPClient) Delete(ctx context.Context, path string) (json.RawMessage, error) {
 	return c.do(ctx, http.MethodDelete, path, nil)
 }

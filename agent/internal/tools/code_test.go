@@ -460,3 +460,36 @@ func TestExecToolAbsentWithoutSandbox(t *testing.T) {
 		}
 	}
 }
+
+func TestPRStatus(t *testing.T) {
+	c, _ := setup(t)
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/acme/app/pulls/1":
+			_, _ = w.Write([]byte(`{"state":"open","merged":false,"title":"open one","base":{"ref":"main"}}`))
+		case "/repos/acme/app/pulls/2":
+			_, _ = w.Write([]byte(`{"state":"closed","merged":true,"title":"done","merge_commit_sha":"m1","base":{"ref":"main"}}`))
+		case "/repos/acme/app/commits/main":
+			_, _ = w.Write([]byte(`{"sha":"m1"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer gh.Close()
+	c.apiBase = gh.URL
+
+	res, err := call(t, c, "code_pr_status", map[string]any{"project": "p-1", "number": float64(1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := res.(map[string]any); m["state"] != "open" || !strings.Contains(m["next"].(string), "not merged yet") {
+		t.Fatalf("open PR: %v", m)
+	}
+	res, err = call(t, c, "code_pr_status", map[string]any{"project": "p-1", "number": float64(2)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := res.(map[string]any); m["state"] != "merged" || m["head_is_the_merge_commit"] != true {
+		t.Fatalf("merged PR: %v", m)
+	}
+}

@@ -26,6 +26,7 @@ func Root() *cobra.Command {
 		SetupCmd(),
 		ProjectCmd(),
 		RegionCmd(),
+		ApprovalCmd(),
 		TemplateCmd(),
 		BuildCmd(),
 		SecretCmd(),

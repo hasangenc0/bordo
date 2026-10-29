@@ -185,6 +185,21 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Deploy records a rolling release of image to one region, exactly as POST /v1/releases does for
+// a single region, and returns its id. The on-cluster reconciler picks it up on its next pull.
+func Deploy(ctx context.Context, db *sql.DB, projectID, image, region, expose string) (string, error) {
+	if expose == "" {
+		expose = "none"
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	id := uuid.New().String()
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO bordo_releases (id, project_id, image_tag, region, strategy, status, release_group_id, expose, expose_host, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, 'rolling', 'reconciling', ?, ?, '', ?, ?)`,
+		id, projectID, image, region, uuid.New().String(), expose, now, now)
+	return id, err
+}
+
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	row := h.db.QueryRowContext(r.Context(),

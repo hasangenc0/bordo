@@ -19,6 +19,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/hasangenc0/bordo/control-plane/internal/approval"
+	"github.com/hasangenc0/bordo/control-plane/internal/autodeploy"
 	"github.com/hasangenc0/bordo/control-plane/internal/buildorchestrator"
 	"github.com/hasangenc0/bordo/control-plane/internal/config"
 	"github.com/hasangenc0/bordo/control-plane/internal/environment"
@@ -305,6 +306,22 @@ func (s *Server) registerRoutes() {
 		go buildExecutor.ResumeInterrupted(context.Background())
 		r.Mount("/builds", buildorchestrator.NewHandler(buildStore, buildExecutor))
 		r.Mount("/releases", release.NewHandler(s.db))
+
+		// Deploy-on-merge: poll opted-in projects' default branches, build what moved, release it.
+		headOf := func(ctx context.Context, projectID string) (string, error) {
+			_, sha, err := buildExecutor.RepoHead(ctx, projectID)
+			return sha, err
+		}
+		adStore := autodeploy.NewStore(s.db)
+		go autodeploy.NewWatcher(adStore, autodeploy.Deps{
+			Head:  headOf,
+			Build: buildExecutor.BuildAndWait,
+			Release: func(ctx context.Context, projectID, image, region, expose string) (string, error) {
+				return release.Deploy(ctx, s.db, projectID, image, region, expose)
+			},
+			Approvals: approval.NewStore(s.db),
+		}, time.Minute, func(f string, a ...any) { s.logger.Info(fmt.Sprintf(f, a...)) }).Run(context.Background())
+		r.Mount("/projects/{projectID}/autodeploy", autodeploy.NewHandler(s.db, adStore, headOf))
 
 		secretsHandler := secrets.NewHandler(secrets.NewSQLiteStore(s.db, s.secretKey))
 		r.Route("/projects/{projectID}/secrets", func(r chi.Router) {

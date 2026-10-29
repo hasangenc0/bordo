@@ -354,6 +354,30 @@ func (c *Client) UpgradeReconciler(ctx context.Context, region string, force boo
 	return &out, nil
 }
 
+// Approval is a pending or resolved approval request.
+type Approval struct {
+	ID     string `json:"id"`
+	Kind   string `json:"kind"`
+	Target string `json:"target"`
+	Status string `json:"status"`
+}
+
+// PendingApprovals lists approvals waiting for a decision.
+func (c *Client) PendingApprovals(ctx context.Context) ([]Approval, error) {
+	var out struct {
+		Approvals []Approval `json:"approvals"`
+	}
+	if err := c.get(ctx, "/v1/approvals", &out); err != nil {
+		return nil, err
+	}
+	return out.Approvals, nil
+}
+
+// DecideApproval approves or rejects (verdict "approve" or "reject") an approval request.
+func (c *Client) DecideApproval(ctx context.Context, id, verdict string) error {
+	return c.post(ctx, "/v1/approvals/"+url.PathEscape(id)+"/"+verdict, struct{}{}, nil)
+}
+
 // MintJoinToken mints a single-use node-join token for a region.
 func (c *Client) MintJoinToken(ctx context.Context, region string) (*JoinToken, error) {
 	var out JoinToken

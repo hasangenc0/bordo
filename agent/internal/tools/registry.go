@@ -45,6 +45,11 @@ func NewBordoToolRegistry(cp *CPClient) *ToolRegistry {
 		r.Register(t)
 	}
 
+	// Deploy-on-merge
+	r.Register(autodeploySetTool(cp))
+	r.Register(autodeployStatusTool(cp))
+	r.Register(autodeployOffTool(cp))
+
 	// Region / fleet tools
 	r.Register(regionListTool(cp))
 	r.Register(regionAddTool(cp))

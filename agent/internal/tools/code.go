@@ -472,6 +472,9 @@ func (c *CodeTools) Tools() []*Tool {
 				"body":  prop("string", "PR description (optional)"),
 			}, []string{"title"}, c.openPR),
 		c.mergeTool(),
+		c.tool("code_pr_status",
+			"Check a pull request's state: open, closed or merged, and whether the default branch has the merge. Use it after the user says a PR was merged, before building: a build only picks up code that is on the default branch.",
+			map[string]any{"number": prop("integer", "Pull request number")}, []string{"number"}, c.prStatus),
 	}
 	if u := os.Getenv("BORDO_SANDBOX_URL"); u != "" {
 		tools = append(tools, c.execTool(u))
@@ -546,6 +549,59 @@ func (c *CodeTools) mergePR(ctx context.Context, w *ws, params map[string]any) (
 	}
 	return map[string]any{"merged": out.Merged, "merge_commit": out.SHA, "pr": n, "title": pr.Title, "into": pr.Base.Ref, "method": method,
 		"next": "a build starts from the push to the default branch; check build_list for it, or build_trigger if none appears"}, nil
+}
+
+// prStatus reports whether a PR has actually landed on the default branch, so the agent does not
+// build and deploy the old head after "merged".
+func (c *CodeTools) prStatus(ctx context.Context, w *ws, params map[string]any) (any, error) {
+	n := intParam(params, "number")
+	if n <= 0 {
+		return nil, errors.New("number is required")
+	}
+	var pr struct {
+		State          string `json:"state"`
+		Merged         bool   `json:"merged"`
+		Draft          bool   `json:"draft"`
+		Title          string `json:"title"`
+		MergeCommitSHA string `json:"merge_commit_sha"`
+		Mergeable      *bool  `json:"mergeable"`
+		HTMLURL        string `json:"html_url"`
+		Base           struct {
+			Ref string `json:"ref"`
+		} `json:"base"`
+	}
+	if err := c.githubJSON(ctx, w.token, http.MethodGet, fmt.Sprintf("%s/repos/%s/%s/pulls/%d", c.apiBase, w.owner, w.repo, n), nil, &pr); err != nil {
+		return nil, err
+	}
+	var head struct {
+		SHA string `json:"sha"`
+	}
+	headErr := c.githubJSON(ctx, w.token, http.MethodGet,
+		fmt.Sprintf("%s/repos/%s/%s/commits/%s", c.apiBase, w.owner, w.repo, pr.Base.Ref), nil, &head)
+
+	state := pr.State
+	if pr.Merged {
+		state = "merged"
+	}
+	out := map[string]any{"pr": n, "title": pr.Title, "state": state, "draft": pr.Draft, "url": pr.HTMLURL, "base": pr.Base.Ref}
+	if pr.Merged {
+		out["merge_commit"] = pr.MergeCommitSHA
+	}
+	if headErr == nil {
+		out["default_branch_head"] = head.SHA
+		if pr.Merged {
+			out["head_is_the_merge_commit"] = head.SHA == pr.MergeCommitSHA
+		}
+	}
+	switch {
+	case !pr.Merged && pr.State == "open":
+		out["next"] = "not merged yet: the default branch does not have this change, so a build would produce the old code"
+	case !pr.Merged:
+		out["next"] = "closed without merging: the change is not on the default branch"
+	default:
+		out["next"] = "merged: a build of the default branch now includes this change"
+	}
+	return out, nil
 }
 
 // githubJSON performs an authenticated GitHub API call and decodes the JSON response.

@@ -103,3 +103,54 @@ func (e *Executor) EnableBuilds(ctx context.Context, projectID string) (repo, pa
 	}
 	return owner + "/" + name, workflowPath, nil
 }
+
+// RepoHead returns the default branch and latest commit of a project's GitHub repository, for
+// callers that want to know whether the code moved without building it.
+func (e *Executor) RepoHead(ctx context.Context, projectID string) (branch, sha string, err error) {
+	repoURL := e.resolveRepoURL(ctx, projectID)
+	if repoURL == "" {
+		return "", "", errors.New("this project has no GitHub repository")
+	}
+	owner, repo, err := githubpkg.ParseRepoURL(repoURL)
+	if err != nil {
+		return "", "", err
+	}
+	if e.ghStore == nil {
+		return "", "", errors.New("GitHub is not connected")
+	}
+	token, err := e.githubToken(ctx)
+	if err != nil || token == "" {
+		return "", "", errors.New("GitHub is not connected")
+	}
+	return githubpkg.RepoHead(ctx, token, owner, repo)
+}
+
+// BuildAndWait runs a build for the project and blocks until it settles, returning the image
+// reference it produced.
+func (e *Executor) BuildAndWait(ctx context.Context, projectID, projectName string) (string, error) {
+	b, err := e.store.Create(ctx, projectID, projectName, "latest")
+	if err != nil {
+		return "", err
+	}
+	e.Execute(b.ID)
+	for {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(importedPoll):
+		}
+		cur, err := e.store.Get(ctx, b.ID)
+		if err != nil {
+			return "", err
+		}
+		switch cur.Status {
+		case "success":
+			if cur.ImageDigest == "" {
+				return "", errors.New("the build succeeded but produced no image")
+			}
+			return cur.ImageDigest, nil
+		case "failed":
+			return "", fmt.Errorf("build %s failed: %s", b.ID, cur.ErrorMessage)
+		}
+	}
+}
