@@ -39,6 +39,12 @@ kind: Secret
 metadata:
   name: bordo-registry-creds
   namespace: %s
+  labels:
+    # The reconciler runs "kubectl apply -l bordo.io/managed=true", which skips every object
+    # without this label. Without it the secret was never refreshed after the label selector was
+    # introduced, and a revoked token stayed on the cluster forever. (Prune only touches
+    # Deployments and Services, so labelling a Secret does not expose it to pruning.)
+    bordo.io/managed: "true"
 type: kubernetes.io/dockerconfigjson
 data:
   .dockerconfigjson: %s

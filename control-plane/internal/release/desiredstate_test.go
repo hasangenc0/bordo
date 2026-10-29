@@ -144,3 +144,22 @@ func TestDesiredStateNewestWinsAcrossProjectIDSpellings(t *testing.T) {
 		t.Fatalf("ids = %v, manifest = %q", ids, ds)
 	}
 }
+
+// The reconciler applies with `kubectl apply -l bordo.io/managed=true`, which silently skips any
+// object without that label. Every object a release renders must carry it.
+func TestEveryRenderedObjectCarriesTheManagedLabel(t *testing.T) {
+	for _, expose := range []string{"none", "nodeport", "ingress"} {
+		m, err := renderManifest("p1", "ghcr.io/o/app:abc", "rolling", expose, "app.example.com")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, doc := range strings.Split(m, "\n---") {
+			if !strings.Contains(doc, "kind: ") || strings.Contains(doc, "kind: Namespace") {
+				continue // the namespace document is stripped before shipping
+			}
+			if !strings.Contains(doc, `bordo.io/managed: "true"`) {
+				t.Errorf("expose=%s: object without the managed label would never be applied:\n%s", expose, doc)
+			}
+		}
+	}
+}

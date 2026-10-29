@@ -277,6 +277,8 @@ kind: Ingress
 metadata:
   name: {{.AppLabel}}
   namespace: bordo-apps
+  labels:
+    bordo.io/managed: "true"
 spec:
   rules:
     - host: {{.Host}}

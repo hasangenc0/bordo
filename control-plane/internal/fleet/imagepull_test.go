@@ -18,6 +18,8 @@ func TestRenderImagePullSecret(t *testing.T) {
 		"namespace: bordo-apps",
 		"type: kubernetes.io/dockerconfigjson",
 		".dockerconfigjson:",
+		// The reconciler applies with -l bordo.io/managed=true and skips unlabelled objects.
+		`bordo.io/managed: "true"`,
 	} {
 		if !strings.Contains(m, want) {
 			t.Errorf("manifest missing %q", want)
