@@ -4,47 +4,76 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Bordo</title>
+<meta name="description" content="Tell an agent what to build. Bordo scaffolds it, builds the image in GitHub Actions, and deploys it to your own server on k3s.">
+<link rel="canonical" href="https://hasangenc0.github.io/bordo/">
 <link rel="icon" type="image/png" href="favicon.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Bordo: one sentence in, a running service out">
+<meta property="og:description" content="Self-hosted. An agent scaffolds, builds and deploys your service to a server you own.">
 <meta property="og:image" content="https://hasangenc0.github.io/bordo/icon.png">
-<meta name="description" content="Tell an agent what to build. Bordo scaffolds it, builds the image in GitHub Actions, and deploys it to your own server on k3s.">
+<meta name="twitter:card" content="summary">
 <style>
-:root{--bg:#fbfaf8;--fg:#1c1b1a;--muted:#6a6560;--line:#e4e0da;--accent:#8c1f3d;--code-bg:#1c1b1a;--code-fg:#f1ede6;--ok:#6fcf97}
-@media (prefers-color-scheme:dark){:root{--bg:#141312;--fg:#eeeae4;--muted:#9a948c;--line:#2c2a27;--accent:#e0566b;--code-bg:#0c0b0a;--code-fg:#f1ede6}}
+:root{--bg:#fbfaf8;--fg:#1c1b1a;--muted:#6a6560;--line:#e4e0da;--accent:#8c1f3d;--code-bg:#1c1b1a;--code-fg:#f1ede6;--ok:#6fcf97;--bad:#b3261e}
+@media (prefers-color-scheme:dark){:root{--bg:#141312;--fg:#eeeae4;--muted:#9a948c;--line:#2c2a27;--accent:#e0566b;--code-bg:#0c0b0a;--code-fg:#f1ede6;--bad:#e0766b}}
 *{box-sizing:border-box}
+html{scroll-behavior:smooth}
 body{margin:0;background:var(--bg);color:var(--fg);font:17px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
 main{max-width:760px;margin:0 auto;padding:0 16px 80px}
 header{display:flex;justify-content:space-between;align-items:center;padding:20px 0}
 .logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:20px;letter-spacing:-.01em}
 .logo img{width:32px;height:32px;border-radius:8px}
-header a{color:var(--muted);text-decoration:none;font-size:15px}
-header a:hover{color:var(--fg)}
+nav{display:flex;gap:20px}
+nav a{color:var(--muted);text-decoration:none;font-size:15px}
+nav a:hover{color:var(--fg)}
 h1{font-size:clamp(34px,6vw,52px);line-height:1.1;letter-spacing:-.025em;margin:56px 0 16px}
-h2{font-size:24px;letter-spacing:-.01em;margin:64px 0 16px}
+h2{font-size:24px;letter-spacing:-.01em;margin:72px 0 16px}
 .sub{font-size:20px;color:var(--muted);margin:0 0 32px;max-width:34em}
+.needs{color:var(--muted);font-size:14px;margin:16px 0 0}
 pre{background:var(--code-bg);color:var(--code-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font:14px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0 0 12px}
+.copy{position:relative}
+.copy pre{padding-right:76px;white-space:pre-wrap;word-break:break-all}
+.copy button{position:absolute;top:10px;right:10px;font:600 12px system-ui,sans-serif;color:var(--code-fg);background:#ffffff1f;border:0;border-radius:6px;padding:5px 10px;cursor:pointer}
+.copy button:hover{background:#ffffff38}
 .ok{color:var(--ok)}.dim{color:#8d867c}
 code{font:.88em ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--line);padding:1px 6px;border-radius:4px}
 .cta{display:flex;gap:12px;flex-wrap:wrap;margin-top:20px}
 .btn{display:inline-block;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;border:1px solid var(--line);color:var(--fg)}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.vs{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.vs>div{border:1px solid var(--line);border-radius:10px;padding:18px 20px}
+.vs h3{margin:0 0 10px;font-size:15px;color:var(--muted);font-weight:600}
+.vs ul{margin:0;padding:0;list-style:none}
+.vs li{padding:4px 0;font-size:16px}
+.vs .without li{color:var(--muted)}
+.vs .without li::before{content:"✗";color:var(--bad);margin-right:10px}
+.vs .with li::before{content:"✓";color:var(--ok);margin-right:10px}
+.vs .with{border-color:var(--accent)}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:28px 32px}
 .grid h3{margin:0 0 4px;font-size:17px}
 .grid p{margin:0;color:var(--muted);font-size:16px}
 table{width:100%;border-collapse:collapse;font-size:16px}
 td,th{text-align:left;padding:10px 12px 10px 0;border-bottom:1px solid var(--line);vertical-align:top}
 th{color:var(--muted);font-weight:600;font-size:14px}
-ol{padding-left:22px}ol li{margin-bottom:10px}
+.steps{list-style:none;padding:0;margin:0;counter-reset:s}
+.steps>li{counter-increment:s;position:relative;padding-left:44px;margin-bottom:28px}
+.steps>li::before{content:counter(s);position:absolute;left:0;top:0;width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;font-size:15px;display:flex;align-items:center;justify-content:center}
+.steps h3{margin:0 0 6px;font-size:18px}
+.steps p{margin:0 0 10px;color:var(--muted);font-size:16px}
+details{border-top:1px solid var(--line);padding:12px 0}
+details:last-of-type{border-bottom:1px solid var(--line)}
+summary{cursor:pointer;font-weight:600;font-size:16px}
+details p,details .copy{margin-top:12px}
 footer{margin-top:72px;padding-top:20px;border-top:1px solid var(--line);color:var(--muted);font-size:14px}
 footer a{color:inherit}
-@media (max-width:600px){.grid{grid-template-columns:1fr}}
+@media (max-width:640px){.grid,.vs{grid-template-columns:1fr}nav{gap:14px}}
 </style>
 </head>
 <body>
 <main>
 <header>
   <div class="logo"><img src="icon.png" alt="" width="32" height="32">Bordo</div>
-  <a href="https://github.com/hasangenc0/bordo">GitHub</a>
+  <nav><a href="#install">Install</a><a href="#templates">Templates</a><a href="https://github.com/hasangenc0/bordo">GitHub</a></nav>
 </header>
 
 <h1>One sentence in. A running service out.</h1>
@@ -60,33 +89,80 @@ footer a{color:inherit}
   <a class="btn primary" href="#install">Install in 5 minutes</a>
   <a class="btn" href="https://github.com/hasangenc0/bordo">Source on GitHub</a>
 </div>
+<p class="needs">You need: a Linux server with Docker, a GitHub account, and a DeepSeek API key.</p>
+
+<h2>What you skip writing</h2>
+<div class="vs">
+  <div class="without">
+    <h3>Without Bordo</h3>
+    <ul>
+      <li>A Dockerfile</li>
+      <li>A CI workflow to build and push it</li>
+      <li>Kubernetes manifests</li>
+      <li>A registry login on the cluster</li>
+      <li>Cluster credentials for your deploy tool</li>
+    </ul>
+  </div>
+  <div class="with">
+    <h3>With Bordo</h3>
+    <ul>
+      <li>One sentence to the agent</li>
+      <li>Or <code>bordo project create</code>, then <code>bordo deploy create</code></li>
+      <li>A URL back</li>
+    </ul>
+  </div>
+</div>
 
 <h2>What you get</h2>
 <div class="grid">
-  <div><h3>No platform team needed</h3><p>No Dockerfiles, Kubernetes manifests, or CI YAML to write. Templates carry the defaults.</p></div>
   <div><h3>Runs on a $5 VPS</h3><p>One Linux box with Docker is enough. Bordo installs k3s for you.</p></div>
   <div><h3>Builds stay off your server</h3><p>Images build in GitHub Actions and publish to GHCR, so the server only runs them.</p></div>
   <div><h3>Multi-region</h3><p><code>bordo region add</code> prints one command. Run it on another machine and it joins the fleet.</p></div>
   <div><h3>No keys left lying around</h3><p>Servers join with a one-time token. The control plane stores no SSH keys and no cluster-admin credentials. Each cluster pulls its own config.</p></div>
   <div><h3>Observability included</h3><p>OpenTelemetry, VictoriaMetrics, Loki and Tempo. Ask the agent for logs or a rollback.</p></div>
+  <div><h3>Console and CLI</h3><p>Chat, apps, regions, metrics and logs in the web console, or the same from <code>bordo</code> in a terminal.</p></div>
 </div>
 
 <h2 id="install">Install</h2>
-<p>You need a Linux server you can SSH into, with Docker installed.</p>
-<pre>curl -fsSL https://raw.githubusercontent.com/hasangenc0/bordo/master/install-cli.sh | sh
-bordo setup</pre>
-<p><code>bordo setup</code> installs and starts Bordo, reads the setup token for you, asks for a DeepSeek API key, then shows a short code to enter at GitHub. Prefix the install with <code>BORDO_SETUP=1</code> to run setup right after it, or pass <code>--deepseek-key</code> and <code>--skip-github</code> to script it. Prefer a browser? The web console runs the same setup: DeepSeek key, then GitHub.</p>
-<p>Then ship something:</p>
-<pre>bordo agent chat
-<span class="dim">›</span> create a java web service called hello-api and build it
-<span class="dim">›</span> deploy hello-api and expose it to the internet</pre>
-<p>Prefer plain commands?</p>
-<pre>bordo project create hello-api --template java-web-service
-bordo build trigger hello-api
-bordo deploy create &lt;project-id&gt; &lt;image&gt; --region &lt;region&gt; --expose nodeport</pre>
-<p>For HTTPS on your own domain, deploy with <code>--expose ingress --host app.yourdomain.com</code>.</p>
+<ol class="steps">
+  <li>
+    <h3>Install the CLI on your server</h3>
+    <div class="copy"><pre>curl -fsSL https://raw.githubusercontent.com/hasangenc0/bordo/master/install-cli.sh | sh</pre><button type="button">Copy</button></div>
+  </li>
+  <li>
+    <h3>Run setup</h3>
+    <p>Installs and starts Bordo, reads the setup token for you, asks for your DeepSeek API key, then shows a short code to enter at GitHub.</p>
+    <div class="copy"><pre>bordo setup</pre><button type="button">Copy</button></div>
+  </li>
+  <li>
+    <h3>Ship something</h3>
+    <pre>bordo agent chat
+› create a java web service called hello-api and build it
+› deploy hello-api and expose it to the internet</pre>
+  </li>
+</ol>
 
-<h2>Templates</h2>
+<details>
+  <summary>Prefer a browser for setup?</summary>
+  <p>Run <code>bordo platform install</code> and <code>bordo platform up</code>, then open the console at <code>http://your-server:3000</code>. It asks for the DeepSeek key, then walks you through connecting GitHub. Login: <code>bordo platform password</code>.</p>
+</details>
+<details>
+  <summary>Script it, or skip the prompts</summary>
+  <p>Run setup straight after installing with <code>BORDO_SETUP=1</code>, or pass the key and skip GitHub:</p>
+  <div class="copy"><pre>DEEPSEEK_API_KEY=sk-... bordo setup --skip-github</pre><button type="button">Copy</button></div>
+</details>
+<details>
+  <summary>Plain commands instead of the agent</summary>
+  <div class="copy"><pre>bordo project create hello-api --template java-web-service
+bordo build trigger hello-api
+bordo deploy create &lt;project-id&gt; &lt;image&gt; --region &lt;region&gt; --expose nodeport</pre><button type="button">Copy</button></div>
+</details>
+<details>
+  <summary>HTTPS on your own domain</summary>
+  <p>Deploy with <code>--expose ingress --host app.yourdomain.com</code> and point your domain at the server.</p>
+</details>
+
+<h2 id="templates">Templates</h2>
 <table>
   <tr><th>Stack</th><th>Ships with</th></tr>
   <tr><td>Go</td><td><code>go-web-service</code> <code>go-job</code> <code>go-kafka</code>. Static binaries that run in a few MB of RAM.</td></tr>
@@ -101,5 +177,14 @@ bordo deploy create &lt;project-id&gt; &lt;image&gt; --region &lt;region&gt; --e
   Apache 2.0. <a href="https://github.com/hasangenc0/bordo">github.com/hasangenc0/bordo</a> · <a href="https://github.com/hasangenc0/bordo/blob/master/docs/guides/running-with-the-cli.md">CLI guide</a> · <a href="https://github.com/hasangenc0/bordo/blob/master/docs/architecture/ADR-0006-hardened-deployment.md">Deploy security model</a>
 </footer>
 </main>
+<script>
+document.querySelectorAll('.copy button').forEach(function (b) {
+  b.addEventListener('click', function () {
+    var text = b.previousElementSibling.textContent;
+    var done = function () { b.textContent = 'Copied'; setTimeout(function () { b.textContent = 'Copy'; }, 1500); };
+    if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, function () {});
+  });
+});
+</script>
 </body>
 </html>
