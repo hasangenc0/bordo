@@ -3,8 +3,10 @@ package clusteragent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -229,5 +231,41 @@ func TestParseObservationKeepsPullErrorMessage(t *testing.T) {
 	}
 	if p := obs.Pods[0]; p.Image != "ghcr.io/o/r:1" || p.Message != "failed to authorize: denied" {
 		t.Fatalf("pod = %+v", p)
+	}
+}
+
+func TestPullSendsRevision(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get(revisionHeader)
+		_ = json.NewEncoder(w).Encode(map[string]string{"region": "r"})
+	}))
+	defer srv.Close()
+	a := New(Config{CPURL: srv.URL, ClusterToken: "ct", Interval: time.Second})
+	if err := a.ReconcileOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got != strconv.Itoa(Revision) {
+		t.Fatalf("revision header = %q, want %d", got, Revision)
+	}
+}
+
+func TestRestartRequestStopsRunWithoutApplying(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"region": "r", "manifests": "KIND: Deployment", "restart": true})
+	}))
+	defer srv.Close()
+	applied := false
+	a := New(Config{CPURL: srv.URL, ClusterToken: "ct", Interval: time.Hour})
+	a.apply = func(context.Context, string, string) error { applied = true; return nil }
+
+	if err := a.ReconcileOnce(context.Background()); !errors.Is(err, ErrRestart) {
+		t.Fatalf("want ErrRestart, got %v", err)
+	}
+	if err := a.Run(context.Background()); err != nil {
+		t.Fatalf("Run must return nil on a restart request so the process exits cleanly, got %v", err)
+	}
+	if applied {
+		t.Error("must not apply manifests when asked to restart")
 	}
 }

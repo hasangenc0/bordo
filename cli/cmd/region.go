@@ -14,7 +14,7 @@ func RegionCmd() *cobra.Command {
 		Use:   "region",
 		Short: "Manage fleet regions (k3s clusters)",
 	}
-	cmd.AddCommand(regionAddCmd(), regionTokenCmd(), regionSetHostCmd())
+	cmd.AddCommand(regionAddCmd(), regionTokenCmd(), regionSetHostCmd(), regionUpgradeCmd())
 	return cmd
 }
 
@@ -79,6 +79,40 @@ func regionSetHostCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func regionUpgradeCmd() *cobra.Command {
+	var force bool
+	cmd := &cobra.Command{
+		Use:   "upgrade <name>",
+		Short: "Restart a region's on-cluster reconciler onto the latest image",
+		Long: "The reconciler runs in the region's cluster and is not part of 'bordo upgrade'. This asks it to\n" +
+			"restart itself on its next pull (within about 30s); the cluster starts it again from the latest image.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client.NewFromConfig()
+			if err != nil {
+				return err
+			}
+			res, err := c.UpgradeReconciler(cmd.Context(), args[0], force)
+			if err != nil {
+				return err
+			}
+			switch {
+			case res.RestartRequested:
+				fmt.Printf("Asked %q's reconciler to restart; it picks up the latest image within about a minute.\n", args[0])
+			case !res.Reconciler.CanSelfUpgrade:
+				fmt.Printf("%q's reconciler is too old to restart itself (it reports no revision, or has not pulled yet).\n"+
+					"Restart it once on the region's machine:\n  kubectl -n bordo-system rollout restart deployment/bordo-reconciler\n"+
+					"After that, 'bordo region upgrade' works.\n", args[0])
+			default:
+				fmt.Printf("%q's reconciler is already current (revision %d). Use --force to restart it anyway.\n", args[0], res.Reconciler.Revision)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&force, "force", false, "restart even if the reconciler is current")
+	return cmd
 }
 
 // printJoinInstructions shows the one-time token and the command to run on the

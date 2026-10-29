@@ -17,12 +17,15 @@ import (
 
 // Known setting keys.
 const (
-	KeyAdminToken   = "admin_token"
-	KeyDeepSeekKey  = "deepseek_api_key"
-	KeyBaseURL      = "base_url"
-	KeyLLMModel     = "llm_model"
-	KeyLLMURL       = "llm_url"
-	KeyRegistryURL  = "registry_url"
+	KeyAdminToken  = "admin_token"
+	KeyDeepSeekKey = "deepseek_api_key"
+	KeyBaseURL     = "base_url"
+	KeyLLMModel    = "llm_model"
+	KeyLLMURL      = "llm_url"
+	KeyRegistryURL = "registry_url"
+	// KeyGithubClientID is the public client id of the OAuth App used for the
+	// GitHub device flow (BORDO_GITHUB_CLIENT_ID overrides it).
+	KeyGithubClientID = "github_client_id"
 )
 
 // Store is an encrypted KV store backed by SQLite.

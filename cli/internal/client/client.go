@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -326,6 +327,31 @@ func (c *Client) CreateRegion(ctx context.Context, name string) (*Region, error)
 // SetRegionHost records the public address of a region's machine.
 func (c *Client) SetRegionHost(ctx context.Context, region, host string) error {
 	return c.post(ctx, "/v1/regions/"+region+"/public-host", map[string]string{"public_host": host}, nil)
+}
+
+// ReconcilerUpgrade is the control plane's answer to a reconciler upgrade request.
+type ReconcilerUpgrade struct {
+	Region     string `json:"region"`
+	Reconciler struct {
+		Revision       int  `json:"revision"`
+		Expected       int  `json:"expected"`
+		Current        bool `json:"current"`
+		CanSelfUpgrade bool `json:"can_self_upgrade"`
+	} `json:"reconciler"`
+	RestartRequested bool `json:"restart_requested"`
+}
+
+// UpgradeReconciler asks a region's on-cluster reconciler to restart onto the latest image.
+func (c *Client) UpgradeReconciler(ctx context.Context, region string, force bool) (*ReconcilerUpgrade, error) {
+	path := "/v1/fleet/regions/" + url.PathEscape(region) + "/reconciler/upgrade"
+	if force {
+		path += "?force=true"
+	}
+	var out ReconcilerUpgrade
+	if err := c.post(ctx, path, struct{}{}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // MintJoinToken mints a single-use node-join token for a region.

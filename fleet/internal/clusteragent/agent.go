@@ -27,6 +27,17 @@ const (
 	defaultNamespace = "bordo-apps"
 )
 
+// Revision identifies what this reconciler build can do. It is sent with every pull so the control
+// plane can tell when a region is running an older reconciler than the platform expects. Bump it
+// (and control-plane/internal/fleet.ExpectedReconcilerRevision with it) whenever a change here is
+// something the control plane depends on.
+//
+//	1  reports its revision; restarts itself when the control plane asks
+const Revision = 1
+
+// revisionHeader carries Revision on the desired-state pull.
+const revisionHeader = "X-Bordo-Reconciler-Revision"
+
 // Config is the reconciler's runtime configuration (from env, set by its
 // Deployment manifest).
 type Config struct {
@@ -164,18 +175,37 @@ func New(cfg Config) *Agent {
 	}
 }
 
+// desiredState is the control plane's answer to a pull.
+type desiredState struct {
+	Region     string   `json:"region"`
+	Manifests  string   `json:"manifests"`
+	ReleaseIDs []string `json:"release_ids"`
+	// Restart asks the reconciler to exit so the cluster starts it again from its current image.
+	Restart bool `json:"restart"`
+}
+
 // fetchDesiredState pulls the region's manifests from the control plane, along
 // with the IDs of the releases included in the bundle (so the apply result can
 // be reported back).
 func (a *Agent) fetchDesiredState(ctx context.Context) (string, []string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.cfg.CPURL+"/fleet/desired-state", nil)
+	ds, err := a.pullDesiredState(ctx)
 	if err != nil {
 		return "", nil, err
 	}
+	return ds.Manifests, ds.ReleaseIDs, nil
+}
+
+func (a *Agent) pullDesiredState(ctx context.Context) (desiredState, error) {
+	var out desiredState
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.cfg.CPURL+"/fleet/desired-state", nil)
+	if err != nil {
+		return out, err
+	}
 	req.Header.Set("Authorization", "Bearer "+a.cfg.ClusterToken)
+	req.Header.Set(revisionHeader, strconv.Itoa(Revision))
 	resp, err := a.httpc.Do(req)
 	if err != nil {
-		return "", nil, err
+		return out, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -186,17 +216,12 @@ func (a *Agent) fetchDesiredState(ctx context.Context) (string, []string, error)
 		if e.Error == "" {
 			e.Error = resp.Status
 		}
-		return "", nil, fmt.Errorf("desired-state: %s", e.Error)
-	}
-	var out struct {
-		Region     string   `json:"region"`
-		Manifests  string   `json:"manifests"`
-		ReleaseIDs []string `json:"release_ids"`
+		return out, fmt.Errorf("desired-state: %s", e.Error)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", nil, err
+		return out, err
 	}
-	return out.Manifests, out.ReleaseIDs, nil
+	return out, nil
 }
 
 // reportStatus tells the control plane which releases this cycle applied, so it
@@ -232,10 +257,14 @@ func (a *Agent) reportStatus(ctx context.Context, releaseIDs []string, applyErr 
 // no-op (nothing to run yet), not an error. After applying, it reports the
 // result so the control plane can advance the releases' status.
 func (a *Agent) ReconcileOnce(ctx context.Context) error {
-	manifests, releaseIDs, err := a.fetchDesiredState(ctx)
+	ds, err := a.pullDesiredState(ctx)
 	if err != nil {
 		return err
 	}
+	if ds.Restart {
+		return ErrRestart
+	}
+	manifests, releaseIDs := ds.Manifests, ds.ReleaseIDs
 	if strings.TrimSpace(manifests) == "" {
 		return nil
 	}
@@ -255,14 +284,22 @@ func (a *Agent) ReconcileOnce(ctx context.Context) error {
 	return applyErr
 }
 
+// ErrRestart is returned by ReconcileOnce when the control plane asked this reconciler to restart.
+var ErrRestart = errors.New("restart requested by the control plane")
+
 // Run reconciles immediately, then on every interval until ctx is cancelled. A
-// failed cycle is logged and retried next tick rather than killing the loop.
+// failed cycle is logged and retried next tick rather than killing the loop. When the control
+// plane asks for a restart (`bordo region upgrade`), Run returns nil: the process exits cleanly
+// and the Deployment starts it again, pulling the current image.
 func (a *Agent) Run(ctx context.Context) error {
-	fmt.Printf("[bordo-reconciler] starting; pulling desired state from %s every %s\n", a.cfg.CPURL, a.cfg.Interval)
+	fmt.Printf("[bordo-reconciler] revision %d starting; pulling desired state from %s every %s\n", Revision, a.cfg.CPURL, a.cfg.Interval)
 	ticker := time.NewTicker(a.cfg.Interval)
 	defer ticker.Stop()
 	for {
-		if err := a.ReconcileOnce(ctx); err != nil && ctx.Err() == nil {
+		if err := a.ReconcileOnce(ctx); errors.Is(err, ErrRestart) {
+			fmt.Println("[bordo-reconciler] restart requested; exiting so the cluster starts the latest image")
+			return nil
+		} else if err != nil && ctx.Err() == nil {
 			fmt.Printf("[bordo-reconciler] reconcile error: %v\n", err)
 		}
 		select {

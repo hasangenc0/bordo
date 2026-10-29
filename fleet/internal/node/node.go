@@ -315,6 +315,8 @@ spec:
       containers:
         - name: reconciler
           image: {{.Image}}
+          # A restart (bordo region upgrade) must fetch the current image, not reuse a cached one.
+          imagePullPolicy: Always
           env:
             - name: BORDO_CP_URL
               value: "{{.CPURL}}"

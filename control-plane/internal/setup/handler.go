@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/hasangenc0/bordo/control-plane/internal/settings"
@@ -95,17 +96,67 @@ func (h *Handler) HandleSetup(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid setup token"})
 		return
 	}
-	if req.DeepSeekKey == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "deepseek_api_key is required"})
+	resp, status, msg := h.save(req)
+	if msg != "" {
+		writeJSON(w, status, map[string]string{"error": msg})
 		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// HandleConsoleSetup handles POST /v1/setup — first-run configuration from the
+// web console. It sits behind the bearer-token middleware (the console proxy
+// adds the internal token), so no log-printed setup token is needed. It only
+// works until setup has completed, and requires a JSON body so a cross-site
+// form post cannot trigger it.
+func (h *Handler) HandleConsoleSetup(w http.ResponseWriter, r *http.Request) {
+	if !isJSON(r) {
+		writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "Content-Type must be application/json"})
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	configured, err := h.store.IsConfigured()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	if configured {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "already configured — use settings to update"})
+		return
+	}
+	var req SetupRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	resp, status, msg := h.save(req)
+	if msg != "" {
+		writeJSON(w, status, map[string]string{"error": msg})
+		return
+	}
+	// The admin token is for the CLI; the console runs on the internal token and
+	// must not hand a new credential to the browser.
+	resp.AdminToken = ""
+	resp.Message = "Setup complete."
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// save validates req, stores the settings and burns the setup token. The caller
+// holds h.mu and has already checked authorization and the configured state.
+// A non-empty message means failure, with the HTTP status to return.
+func (h *Handler) save(req SetupRequest) (SetupResponse, int, string) {
+	if req.DeepSeekKey == "" {
+		return SetupResponse{}, http.StatusBadRequest, "deepseek_api_key is required"
 	}
 
 	adminToken := req.AdminToken
 	if adminToken == "" {
+		var err error
 		adminToken, err = generateToken()
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "generating admin token"})
-			return
+			return SetupResponse{}, http.StatusInternalServerError, "generating admin token"
 		}
 	}
 
@@ -127,18 +178,22 @@ func (h *Handler) HandleSetup(w http.ResponseWriter, r *http.Request) {
 	for k, v := range cfg {
 		if err := h.store.Set(k, v); err != nil {
 			h.logger.Error("setup: saving setting", "key", k, "error", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "saving settings"})
-			return
+			return SetupResponse{}, http.StatusInternalServerError, "saving settings"
 		}
 	}
 
 	h.tokenUsed = true
 	h.logger.Info("bordo setup complete")
 
-	writeJSON(w, http.StatusOK, SetupResponse{
+	return SetupResponse{
 		AdminToken: adminToken,
 		Message:    "Setup complete. Save your admin token — it will not be shown again.",
-	})
+	}, http.StatusOK, ""
+}
+
+func isJSON(r *http.Request) bool {
+	ct := r.Header.Get("Content-Type")
+	return ct == "application/json" || strings.HasPrefix(ct, "application/json;")
 }
 
 // HandleUpdateSetting handles POST /v1/settings — update a single setting (requires auth).
@@ -154,11 +209,12 @@ func (h *Handler) HandleUpdateSetting(w http.ResponseWriter, r *http.Request) {
 
 	// Only allow updating known, non-dangerous keys.
 	allowed := map[string]bool{
-		settings.KeyDeepSeekKey: true,
-		settings.KeyBaseURL:     true,
-		settings.KeyLLMModel:    true,
-		settings.KeyLLMURL:      true,
-		settings.KeyRegistryURL: true,
+		settings.KeyDeepSeekKey:    true,
+		settings.KeyBaseURL:        true,
+		settings.KeyLLMModel:       true,
+		settings.KeyLLMURL:         true,
+		settings.KeyRegistryURL:    true,
+		settings.KeyGithubClientID: true,
 	}
 	if !allowed[req.Key] {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "key not updatable via this endpoint"})

@@ -58,6 +58,29 @@ type Server struct {
 	// desired-state pull, so a missing or expired GitHub login shows up next to the pod's
 	// ImagePullBackOff instead of staying a guess.
 	pullNotes map[string]string
+	// reconcilerRevs is the revision each region's reconciler last reported on a pull (0 or absent
+	// means it predates revision reporting). restartAsk marks regions that were told to restart
+	// on their next pull; it is cleared once delivered.
+	reconcilerRevs map[string]int
+	restartAsk     map[string]bool
+}
+
+// reconcilerInfo says whether a region's on-cluster reconciler is current.
+type reconcilerInfo struct {
+	Revision int  `json:"revision"` // 0: unknown, i.e. older than revision reporting
+	Expected int  `json:"expected"`
+	Current  bool `json:"current"`
+	// CanSelfUpgrade is false for a reconciler too old to act on a restart request.
+	CanSelfUpgrade bool `json:"can_self_upgrade"`
+}
+
+func reconcilerState(rev int) reconcilerInfo {
+	return reconcilerInfo{
+		Revision:       rev,
+		Expected:       fleet.ExpectedReconcilerRevision,
+		Current:        rev >= fleet.ExpectedReconcilerRevision,
+		CanSelfUpgrade: rev >= 1,
+	}
 }
 
 // workloadReport is a region's reconciler-reported runtime snapshot.
@@ -72,6 +95,8 @@ type workloadReport struct {
 	Pods     []observedPod `json:"pods"`
 	// PullSecret says whether the private-image pull secret was shipped to this region.
 	PullSecret string `json:"pull_secret,omitempty"`
+	// Reconciler says whether the region's on-cluster reconciler is up to date.
+	Reconciler *reconcilerInfo `json:"reconciler,omitempty"`
 }
 
 type observedSvc struct {
@@ -301,6 +326,7 @@ func (s *Server) registerRoutes() {
 		r.Mount("/templates", templateHandler)
 		r.Get("/fleet", s.handleFleetOverview)
 		r.Get("/fleet/workloads", s.handleFleetWorkloads)
+		r.Post("/fleet/regions/{name}/reconciler/upgrade", s.handleReconcilerUpgrade)
 
 		// GitHub App integration helpers.
 		r.Get("/github/token", s.handleGithubToken)
@@ -508,6 +534,14 @@ func (s *Server) handleFleetDesiredState(w http.ResponseWriter, r *http.Request)
 	// A successful authenticated pull is the region's liveness signal; record it
 	// so health is derived from reality, not latched at join time.
 	s.recordRegionPull(r.Context(), region)
+	if rev, convErr := strconv.Atoi(r.Header.Get("X-Bordo-Reconciler-Revision")); convErr == nil {
+		s.recordReconcilerRevision(region, rev)
+	}
+	if s.takeRestartRequest(region) {
+		s.logger.Info("asking the region's reconciler to restart", "region", region)
+		writeJSON(w, http.StatusOK, map[string]any{"region": region, "restart": true})
+		return
+	}
 	manifests, releaseIDs, err := release.DesiredState(r.Context(), s.db, region)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
@@ -602,6 +636,10 @@ func (s *Server) handleFleetStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		s.workloads[region] = rep
 		s.workloadsMu.Unlock()
+		s.workloadsMu.RLock()
+		info := reconcilerState(s.reconcilerRevs[region])
+		s.workloadsMu.RUnlock()
+		rep.Reconciler = &info
 		observed = describeWorkloads(rep)
 	}
 	for _, id := range req.AppliedReleaseIDs {
@@ -671,6 +709,9 @@ func describeWorkloads(rep workloadReport) string {
 	if b.Len() == 0 {
 		return "No services or pods were visible in the namespace yet."
 	}
+	if rep.Reconciler != nil && !rep.Reconciler.Current {
+		b.WriteString("The region's reconciler is outdated, so this report may be incomplete (run 'bordo region upgrade <region>'). ")
+	}
 	return strings.TrimSpace(b.String())
 }
 
@@ -683,12 +724,60 @@ func (s *Server) handleFleetWorkloads(w http.ResponseWriter, r *http.Request) {
 	for name, rep := range s.workloads {
 		if want == "" || want == name {
 			rep.PullSecret = s.pullNotes[name]
+			info := reconcilerState(s.reconcilerRevs[name])
+			rep.Reconciler = &info
 			out = append(out, rep)
 		}
 	}
 	s.workloadsMu.RUnlock()
 	sort.Slice(out, func(i, j int) bool { return out[i].Region < out[j].Region })
 	writeJSON(w, http.StatusOK, map[string]any{"regions": out})
+}
+
+func (s *Server) recordReconcilerRevision(region string, rev int) {
+	s.workloadsMu.Lock()
+	defer s.workloadsMu.Unlock()
+	if s.reconcilerRevs == nil {
+		s.reconcilerRevs = map[string]int{}
+	}
+	s.reconcilerRevs[region] = rev
+}
+
+// takeRestartRequest reports whether the region was asked to restart, and clears the request so
+// it is delivered once.
+func (s *Server) takeRestartRequest(region string) bool {
+	s.workloadsMu.Lock()
+	defer s.workloadsMu.Unlock()
+	if !s.restartAsk[region] {
+		return false
+	}
+	delete(s.restartAsk, region)
+	return true
+}
+
+// handleReconcilerUpgrade asks a region's reconciler to restart on its next pull. The Deployment
+// then starts it again from its image (pull policy Always), so it comes back on the latest
+// build without the control plane holding any cluster credentials. A reconciler too old to act
+// on the request is reported as such; it needs one manual restart on the node.
+func (s *Server) handleReconcilerUpgrade(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	var known int
+	if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM regions WHERE name = ?`, name).Scan(&known); err != nil || known == 0 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "region not found"})
+		return
+	}
+	s.workloadsMu.Lock()
+	info := reconcilerState(s.reconcilerRevs[name])
+	requested := false
+	if info.CanSelfUpgrade && (!info.Current || r.URL.Query().Get("force") == "true") {
+		if s.restartAsk == nil {
+			s.restartAsk = map[string]bool{}
+		}
+		s.restartAsk[name] = true
+		requested = true
+	}
+	s.workloadsMu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{"region": name, "reconciler": info, "restart_requested": requested})
 }
 
 // recordRegionPull marks a region as live: it stamps last_pull_at, derives the
