@@ -15,8 +15,8 @@ import (
 var oauthDeviceURL = "https://github.com/login/device/code"
 
 // UserScopes are the OAuth scopes Bordo needs from a user login: create and push repos,
-// manage the build workflow, and push/pull GHCR images.
-const UserScopes = "repo workflow write:packages"
+// manage the build workflow, and push GHCR images, and let the cluster pull them (read:packages).
+const UserScopes = "repo workflow write:packages read:packages"
 
 // DeviceStart is what the user needs to authorize a device flow: open VerificationURI and
 // type UserCode.
