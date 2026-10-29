@@ -18,7 +18,7 @@ export interface Message {
 }
 
 export interface WSIncoming {
-  type: 'message' | 'tool_call' | 'tool_result' | 'done' | 'error' | 'history' | 'action'
+  type: 'message' | 'tool_call' | 'tool_result' | 'done' | 'error' | 'history' | 'action' | 'running'
   content?: string
   role?: 'user' | 'assistant'
   tool_name?: string
@@ -36,8 +36,8 @@ export interface WSIncoming {
 }
 
 export interface WSOutgoing {
-  type: 'message'
-  content: string
+  type: 'message' | 'stop'
+  content?: string
   token: string
 }
 

@@ -42,6 +42,7 @@ type Server struct {
 	upgrader  websocket.Upgrader
 	chats     *chatstore.Store
 	cpClient  *tools.CPClient
+	runs      *runs
 
 	// Lazy LLM-config refresh: the agent may start before 'bordo setup'
 	// stores the key, and the key can change later. These let handleChat
@@ -102,6 +103,7 @@ func Run(ctx context.Context, cfg Config) error {
 		anthropic:       NewAnthropicClient(cfg.APIKey),
 		chats:           chatDB,
 		cpClient:        cpClient,
+		runs:            newRuns(),
 		cpURL:           cpURL,
 		cpToken:         cpToken,
 		providerFromEnv: os.Getenv("DEEPSEEK_API_KEY") != "",
@@ -182,189 +184,11 @@ func Run(ctx context.Context, cfg Config) error {
 		return err
 	case <-ctx.Done():
 		s.logger.Info("bordo-agent shutting down")
+		s.runs.stopAll() // let each run record that it was interrupted
+		time.Sleep(500 * time.Millisecond)
 		shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return s.http.Shutdown(shutCtx)
-	}
-}
-
-func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
-	sessionID := middleware.GetReqID(r.Context())
-	chatID := r.URL.Query().Get("chat_id")
-	conn, err := s.upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		s.logger.Warn("websocket upgrade failed", "error", err)
-		return
-	}
-	defer conn.Close()
-
-	session := s.sessions.Create(sessionID)
-	s.logger.Info("chat session started", "session_id", sessionID, "chat_id", chatID)
-	defer s.logger.Info("chat session ended", "session_id", sessionID)
-
-	sendFrame := func(f WSFrame) error {
-		b, _ := json.Marshal(f)
-		return conn.WriteMessage(websocket.TextMessage, b)
-	}
-
-	// Load history from chatstore and pre-populate session
-	if chatID != "" && s.chats != nil {
-		msgs, _ := s.chats.GetMessages(r.Context(), chatID)
-		if len(msgs) > 0 {
-			_ = sendFrame(WSFrame{Type: "history", Messages: msgs})
-			for _, m := range msgs {
-				session.AddMessage(m.Role, m.Content)
-			}
-		}
-	}
-
-	for {
-		_, msg, err := conn.ReadMessage()
-		if err != nil {
-			break
-		}
-
-		var req ChatMessage
-		if err := json.Unmarshal(msg, &req); err != nil {
-			_ = sendFrame(WSFrame{Type: "error", Content: "invalid message format"})
-			continue
-		}
-
-		userContent := req.Content
-		session.AddMessage("user", userContent)
-
-		// Persist user message
-		if chatID != "" && s.chats != nil {
-			_ = s.chats.AppendMessage(r.Context(), chatID, "user", userContent)
-			// Auto-title from first message
-			existing, _ := s.chats.GetMessages(r.Context(), chatID)
-			if len(existing) == 1 {
-				title := userContent
-				if len([]rune(title)) > 40 {
-					title = string([]rune(title)[:40]) + "…"
-				}
-				_ = s.chats.UpdateTitle(r.Context(), chatID, title)
-			}
-		}
-
-		// Pick up a key configured after startup (e.g. via 'bordo setup').
-		s.refreshModelProvider()
-
-		if s.anthropic.Token == "" {
-			reply := fmt.Sprintf("(no model provider configured — run 'bordo setup' to set the DeepSeek key; received: %q)", userContent)
-			session.AddMessage("assistant", reply)
-			if err := sendFrame(WSFrame{Type: "message", Role: "assistant", Content: reply}); err != nil {
-				break
-			}
-			_ = sendFrame(WSFrame{Type: "done"})
-			continue
-		}
-
-		// Build Anthropic tools list from the registry.
-		allTools := s.tools.List()
-		anthropicTools := make([]AnthropicTool, 0, len(allTools))
-		for _, t := range allTools {
-			schema := t.Schema
-			if schema == nil {
-				schema = map[string]any{"type": "object", "properties": map[string]any{}}
-			}
-			anthropicTools = append(anthropicTools, AnthropicTool{
-				Name:        t.Name,
-				Description: t.Description,
-				InputSchema: schema,
-			})
-		}
-
-		// History up to (not including) the message we just added.
-		history := session.ToAnthropicMessages()
-		// The last entry is the user message we just added; use the full history.
-
-		var fullReply string
-		_, loopErr := s.anthropic.RunAgentLoop(
-			r.Context(),
-			history,
-			anthropicTools,
-			func(ctx context.Context, name string, input map[string]any) (any, error) {
-				tool := s.tools.Get(name)
-				if tool == nil {
-					return nil, fmt.Errorf("unknown tool: %s", name)
-				}
-				if tool.ApprovalSummary != nil {
-					emitAction := func(ev ActionEvent) {
-						b, _ := json.Marshal(ev)
-						_ = conn.WriteMessage(websocket.TextMessage, b)
-					}
-					if aerr := s.requestApproval(ctx, name, actionKindFromTool(name), tool.ApprovalSummary(input), input, emitAction); aerr != nil {
-						_ = sendFrame(WSFrame{Type: "tool_result", ToolName: name, Error: aerr.Error()})
-						return nil, aerr
-					}
-				}
-				result, err := tool.Call(ctx, input)
-				trf := WSFrame{Type: "tool_result", ToolName: name}
-				if err != nil {
-					trf.Error = err.Error()
-				} else if raw, ok := result.(json.RawMessage); ok {
-					var decoded any
-					if json.Unmarshal(raw, &decoded) == nil {
-						trf.Data = decoded
-					} else {
-						trf.Data = string(raw)
-					}
-				} else {
-					trf.Data = result
-				}
-				_ = sendFrame(trf)
-				if tool.ApprovalSummary != nil {
-					return result, err // its approval card already showed the outcome
-				}
-				// Emit action event after tool execution.
-				ae := ActionEvent{
-					Type:         "action",
-					ActionID:     uuid.New().String(),
-					ActionKind:   actionKindFromTool(name),
-					ActionTarget: actionTargetFromInput(input),
-					ActionStatus: "auto_approved",
-					ActionTs:     time.Now().UnixMilli(),
-				}
-				b, _ := json.Marshal(ae)
-				_ = conn.WriteMessage(websocket.TextMessage, b)
-				return result, err
-			},
-			func(text string) {
-				_ = sendFrame(WSFrame{Type: "message", Role: "assistant", Content: text})
-				if fullReply != "" {
-					fullReply += "\n\n" // keep text from separate model turns apart in saved history
-				}
-				fullReply += text
-			},
-			func(name string, input map[string]any) {
-				_ = sendFrame(WSFrame{Type: "tool_call", ToolName: name, Input: input})
-			},
-		)
-
-		if loopErr != nil {
-			s.logger.Error("agent loop error", "error", loopErr)
-			_ = sendFrame(WSFrame{Type: "error", Content: "model error: " + loopErr.Error()})
-			// Keep what was said before the failure: the next message ("continue") otherwise starts
-			// from a history that lacks the work the user just watched happen.
-			if fullReply != "" {
-				partial := fullReply + "\n\n(interrupted by a model error; the user may ask to continue)"
-				session.AddMessage("assistant", partial)
-				if chatID != "" && s.chats != nil {
-					_ = s.chats.AppendMessage(r.Context(), chatID, "assistant", partial)
-				}
-			}
-			_ = sendFrame(WSFrame{Type: "done"})
-			continue
-		}
-
-		session.AddMessage("assistant", fullReply)
-		if chatID != "" && s.chats != nil && fullReply != "" {
-			_ = s.chats.AppendMessage(r.Context(), chatID, "assistant", fullReply)
-		}
-		if err := sendFrame(WSFrame{Type: "done"}); err != nil {
-			break
-		}
 	}
 }
 

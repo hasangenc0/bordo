@@ -75,7 +75,7 @@ func TestRequestApprovalTimesOut(t *testing.T) {
 	s := &Server{cpClient: tools.NewCPClient(cp.URL, "")}
 	approvalTimeout = 50 * time.Millisecond
 	err := s.requestApproval(context.Background(), "code_merge_pr", "merge", "x", nil, func(ActionEvent) {})
-	if err == nil || !strings.Contains(err.Error(), "within 10 minutes") {
+	if err == nil || !strings.Contains(err.Error(), "no one approved") {
 		t.Fatalf("err = %v", err)
 	}
 }

@@ -1,12 +1,13 @@
 import { useRef, useState } from 'react'
 import type { Message } from '../types'
 import { MessageList } from './MessageList'
-import { ArrowUp } from 'lucide-react'
+import { ArrowUp, Square } from 'lucide-react'
 import { Logo } from './Logo'
 
 interface Props {
   messages: Message[]
   onSend: (content: string) => void
+  onStop?: () => void
   connected: boolean
   busy: boolean
   chatId: string | null
@@ -23,7 +24,7 @@ export const DEFAULT_SUGGESTIONS = [
   'Add a /health endpoint to my app and open a PR',
 ]
 
-export function ChatPane({ messages, onSend, connected, busy, chatId, title, variant = 'dock', suggestions = DEFAULT_SUGGESTIONS }: Props) {
+export function ChatPane({ messages, onSend, onStop, connected, busy, chatId, title, variant = 'dock', suggestions = DEFAULT_SUGGESTIONS }: Props) {
   const [draft, setDraft] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   // A brand-new conversation has no socket until the first message creates it,
@@ -95,17 +96,23 @@ export function ChatPane({ messages, onSend, connected, busy, chatId, title, var
           />
           <div className="composer-bar">
             <span className="composer-hint">
-              {busy ? 'Working…' : <><kbd>Enter</kbd> to send · <kbd>Shift</kbd> <kbd>Enter</kbd> for a new line</>}
+              {busy ? 'Working… you can close this; it keeps going' : <><kbd>Enter</kbd> to send · <kbd>Shift</kbd> <kbd>Enter</kbd> for a new line</>}
             </span>
-            <button
-              type="button"
-              className={`send-btn${busy ? ' send-btn--busy' : ''}`}
-              onClick={() => submit()}
-              disabled={!canType || busy || !draft.trim()}
-              aria-label={busy ? 'Working' : 'Send message'}
-            >
-              {busy ? <span className="spinner spinner--inverse" aria-hidden="true" /> : <ArrowUp size={16} strokeWidth={2.25} aria-hidden="true" />}
-            </button>
+            {busy && onStop ? (
+              <button type="button" className="send-btn send-btn--stop" onClick={onStop} aria-label="Stop the agent" title="Stop">
+                <Square size={13} strokeWidth={2.5} fill="currentColor" aria-hidden="true" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                className={`send-btn${busy ? ' send-btn--busy' : ''}`}
+                onClick={() => submit()}
+                disabled={!canType || busy || !draft.trim()}
+                aria-label={busy ? 'Working' : 'Send message'}
+              >
+                {busy ? <span className="spinner spinner--inverse" aria-hidden="true" /> : <ArrowUp size={16} strokeWidth={2.25} aria-hidden="true" />}
+              </button>
+            )}
           </div>
         </div>
       </div>

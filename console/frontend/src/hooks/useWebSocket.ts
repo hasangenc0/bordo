@@ -66,6 +66,10 @@ export function useWebSocket(
         onEventRef.current?.(msg)
 
         switch (msg.type) {
+          case 'running':
+            // The agent is still on a turn started earlier (this client reconnected mid-task).
+            setBusy(true)
+            break
           case 'history':
             setMessages((prev) => [
               ...(msg.messages ?? []).map((m, i) => ({
@@ -178,5 +182,14 @@ export function useWebSocket(
     [transmit],
   )
 
-  return { messages, send, connected, busy }
+  // Ask the agent to abandon the turn in progress. The agent answers with a final 'done' frame.
+  const stop = useCallback(() => {
+    const ws = wsRef.current
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      const payload: WSOutgoing = { type: 'stop', token: tokenRef.current }
+      ws.send(JSON.stringify(payload))
+    }
+  }, [])
+
+  return { messages, send, stop, connected, busy }
 }

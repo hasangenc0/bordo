@@ -10,7 +10,7 @@ import (
 
 var (
 	approvalPoll    = 1500 * time.Millisecond
-	approvalTimeout = 10 * time.Minute
+	approvalTimeout = 60 * time.Minute // the turn keeps waiting while the UI is closed
 )
 
 // errRejected is returned to the model when the user declines an action, so it reports that
@@ -64,7 +64,7 @@ func (s *Server) requestApproval(ctx context.Context, tool, kind, summary string
 		if time.Now().After(deadline) {
 			ev.ActionStatus, ev.ActionTs = "failed", time.Now().UnixMilli()
 			emit(ev)
-			return errors.New("no one approved this action within 10 minutes, so it was not done; ask again if it is still wanted")
+			return fmt.Errorf("no one approved this action within %s, so it was not done; ask again if it is still wanted", approvalTimeout)
 		}
 	}
 }

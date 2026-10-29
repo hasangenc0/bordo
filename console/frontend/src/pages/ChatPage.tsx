@@ -14,6 +14,7 @@ interface Props {
   onDelete: (id: string) => void
   messages: Message[]
   onSend: (text: string) => void
+  onStop: () => void
   connected: boolean
   busy: boolean
   title?: string
@@ -50,7 +51,7 @@ function FleetRail() {
   )
 }
 
-export function ChatPage({ chats, activeChatId, onSelect, onNew, onDelete, messages, onSend, connected, busy, title }: Props) {
+export function ChatPage({ chats, activeChatId, onSelect, onNew, onDelete, messages, onSend, onStop, connected, busy, title }: Props) {
   return (
     <div className="chat-page">
       <aside className="rail rail--left">
@@ -80,6 +81,7 @@ export function ChatPage({ chats, activeChatId, onSelect, onNew, onDelete, messa
           variant="page"
           messages={messages}
           onSend={onSend}
+          onStop={onStop}
           connected={connected}
           busy={busy}
           chatId={activeChatId}

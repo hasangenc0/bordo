@@ -2,7 +2,7 @@ package server
 
 // ChatMessage is an inbound WebSocket message from the client.
 type ChatMessage struct {
-	Type    string `json:"type"` // "message"
+	Type    string `json:"type"` // "message" | "stop"
 	Role    string `json:"role"`
 	Content string `json:"content"`
 	Token   string `json:"token,omitempty"`
@@ -10,7 +10,7 @@ type ChatMessage struct {
 
 // WSFrame is an outbound WebSocket frame from the agent.
 type WSFrame struct {
-	Type     string         `json:"type"`                // "message" | "tool_call" | "tool_result" | "done" | "error" | "history"
+	Type     string         `json:"type"`                // "message" | "tool_call" | "tool_result" | "done" | "error" | "history" | "running"
 	Role     string         `json:"role,omitempty"`      // "assistant" (type=message)
 	Content  string         `json:"content,omitempty"`   // type=message or type=error
 	ToolName string         `json:"tool_name,omitempty"` // type=tool_call

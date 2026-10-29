@@ -88,7 +88,7 @@ function Shell() {
   const onHome = location.pathname === '/'
   const activeChat = chats.find((c) => c.id === activeChatId)
 
-  const { messages, send, connected, busy } = useWebSocket(AGENT_WS_URL, token, activeChatId, (msg: WSIncoming) => {
+  const { messages, send, stop, connected, busy } = useWebSocket(AGENT_WS_URL, token, activeChatId, (msg: WSIncoming) => {
     if (msg.type === 'action' && msg.action_id) {
       const ev: ActionEvent = {
         id: msg.action_id,
@@ -201,6 +201,7 @@ function Shell() {
                     onDelete={(id) => void removeChat(id)}
                     messages={messages}
                     onSend={(t) => void handleSend(t)}
+                    onStop={stop}
                     connected={connected}
                     busy={busy}
                     title={activeChat?.title}
@@ -253,6 +254,7 @@ function Shell() {
                 variant="dock"
                 messages={messages}
                 onSend={(t) => void handleSend(t)}
+                onStop={stop}
                 connected={connected}
                 busy={busy}
                 chatId={activeChatId}
