@@ -4,8 +4,12 @@ import type { ActionEvent, WSIncoming } from './types'
 import { ActivityPanel } from './components/ActivityPanel'
 import { ChatPane } from './components/ChatPane'
 import { Logo } from './components/Logo'
+import { SetupGate } from './components/SetupGate'
+import { GithubConnect } from './components/GithubConnect'
 import { Sidebar } from './components/Sidebar'
+import { api } from './api'
 import { useAuth } from './hooks/useAuth'
+import { useFetch } from './hooks/useFetch'
 import { useChats } from './hooks/useChats'
 import { useWebSocket } from './hooks/useWebSocket'
 import { AppDetailPage } from './pages/AppDetailPage'
@@ -43,9 +47,16 @@ function writeStore(key: string, value: string | null) {
 
 function SettingsPanel({ token, onSave }: { token: string; onSave: (t: string) => void }) {
   const [draft, setDraft] = useState(token)
+  const { data: setup, reload } = useFetch(() => api<{ github_connected: boolean; github_device_ready: boolean }>('/setup/status'), [])
   return (
     <div className="settings-panel">
       <h2>Settings</h2>
+      {setup && (
+        <section className="settings-section">
+          <h3>GitHub</h3>
+          <GithubConnect deviceReady={setup.github_device_ready} connected={setup.github_connected} onConnected={() => void reload()} />
+        </section>
+      )}
       <label className="settings-label">
         Bearer token
         <input
@@ -267,7 +278,9 @@ function Shell() {
 export default function App() {
   return (
     <BrowserRouter>
-      <Shell />
+      <SetupGate>
+        <Shell />
+      </SetupGate>
     </BrowserRouter>
   )
 }

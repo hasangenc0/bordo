@@ -14,6 +14,14 @@ The web UI for Bordo. Chat with your Bordo agent, see your apps, deploy them to 
 
 On every page except Chat, the agent is available in a side panel.
 
+### First run
+
+On a server that isn't configured yet, the console opens a setup screen instead of the app. It asks for the DeepSeek API key, then offers to connect GitHub. `bordo setup` does the same from the terminal; either one completes setup, and the other then reports it as already done.
+
+**Connect GitHub** shows a short code to enter at github.com/login/device (the control plane runs the device flow, since a browser can't call GitHub's device endpoints). It needs the client id of an OAuth App with Device Flow enabled in `BORDO_GITHUB_CLIENT_ID` (set it in `~/.bordo/deploy/.env`, then `bordo platform up`). Without it the same card takes a classic personal access token (`repo`, `workflow`, `write:packages`). It is also under **Settings**, and a banner reminds you until GitHub is connected.
+
+The setup call (`POST /v1/setup`) goes through the console login and works only while the server is unconfigured, so it needs no setup token from the logs. It returns no admin token: the CLI keeps using `bordo setup` for that.
+
 ### Code changes
 
 Asking the agent to change an app's code makes it clone the repo, edit on its own `bordo/...` branch, show you the diff, push the branch and optionally open a pull request. It never pushes to the default branch and cannot edit `.github/workflows`. The agent needs GitHub connected (`bordo github login`) and `git` in its image (the agent Dockerfile installs it).

@@ -48,6 +48,7 @@ type Server struct {
 	ghStore           *githubpkg.Store
 	settingsStore     *settings.Store
 	setupHandler      *setup.Handler
+	deviceFlow        *githubpkg.DeviceFlow
 
 	// workloads holds the latest runtime snapshot each region's reconciler
 	// reported (services, nodePorts, pod states). In memory only: the reconciler
@@ -166,6 +167,7 @@ func New(cfg *config.Config, logger *slog.Logger, db *sql.DB) *Server {
 		ghStore:           ghStore,
 		settingsStore:     settingsStore,
 		setupHandler:      setupHdlr,
+		deviceFlow:        githubpkg.NewDeviceFlow(ghStore),
 	}
 	s.registerMiddleware()
 	s.registerRoutes()
@@ -332,10 +334,16 @@ func (s *Server) registerRoutes() {
 		r.Get("/github/token", s.handleGithubToken)
 		r.Get("/github/status", s.handleGithubStatus)
 		r.Post("/github/user-token", s.handleSetGithubUserToken)
+		r.Post("/github/device/start", s.handleGithubDeviceStart)
+		r.Get("/github/device/status", s.handleGithubDeviceStatus)
+
+		// First-run state and setup for the web console.
+		r.Get("/setup/status", s.handleConsoleSetupStatus)
 
 		// Platform settings — update a single key (admin only).
 		if s.setupHandler != nil {
 			r.Post("/settings", s.setupHandler.HandleUpdateSetting)
+			r.Post("/setup", s.setupHandler.HandleConsoleSetup)
 		}
 
 		// Runtime config endpoint for the agent — returns LLM provider config.

@@ -1223,3 +1223,21 @@ td.ellipsis { max-width: 280px; display: table-cell; }
 .sidebar-icon, .tool-activity-icon, .tool-activity-caret, .diff-caret, .chat-empty-icon, .empty-state-icon, .modal-close, .chat-list-del { display: inline-flex; align-items: center; justify-content: center; }
 .dock-title, .dock-fab, .activity-item-header, .rail-link { display: inline-flex; align-items: center; gap: 6px; }
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
+
+/* First-run setup and GitHub connect */
+.setup-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; background: var(--bg); }
+.setup-card { width: 100%; max-width: 440px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 28px; display: flex; flex-direction: column; gap: 14px; }
+.setup-card h1 { font-size: 20px; margin: 0; }
+.setup-card form { display: flex; flex-direction: column; gap: 10px; }
+.setup-brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 17px; }
+.setup-banner { display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: var(--accent-soft, rgba(140, 31, 61, 0.08)); border-bottom: 1px solid var(--border); font-size: 13px; }
+.setup-banner span { flex: 1; }
+.gh-connect { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.gh-connect p { margin: 0; }
+.gh-ok { display: flex; align-items: center; gap: 6px; color: var(--status-ok, #2f7d4f); }
+.code-box { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.code-box code { font-size: 22px; letter-spacing: 0.12em; font-weight: 650; }
+.link-btn { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font-size: 13px; text-decoration: underline; }
+.form-error { color: var(--status-failed, #b3261e); font-size: 13px; margin: 0; }
+.settings-section { margin: 20px 0; }
+.settings-section h3 { font-size: 14px; margin: 0 0 8px; }

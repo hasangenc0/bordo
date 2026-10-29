@@ -14,6 +14,8 @@ services:
       - BORDO_LOKI_URL=http://loki:3100
       - BORDO_TEMPO_URL=http://tempo:3200
       - BORDO_AUTH_TOKEN=${BORDO_INTERNAL_TOKEN}
+      # OAuth App client id for "Connect GitHub" in the console (Device Flow enabled).
+      - BORDO_GITHUB_CLIENT_ID=${BORDO_GITHUB_CLIENT_ID:-}
       # - BORDO_BASE_URL=${BORDO_BASE_URL}
       # - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       # - BORDO_REGISTRY=${BORDO_REGISTRY}

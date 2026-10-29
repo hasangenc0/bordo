@@ -47,6 +47,12 @@ time.
 
 ---
 
+You can also finish setup in the web console instead of the terminal: after
+`bordo platform install` and `bordo platform up`, open `http://<server>:3000` and
+follow the setup screen (see `console/README.md`).
+
+---
+
 ## Bring up the platform
 
 ```bash

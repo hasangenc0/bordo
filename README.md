@@ -40,6 +40,8 @@ It installs and starts Bordo, reads the setup token for you, asks for your DeepS
 Want it in one line? `curl ... | BORDO_SETUP=1 sh` runs setup right after installing.
 Scripting it? `DEEPSEEK_API_KEY=... bordo setup --skip-github` asks nothing. Add `--advanced` to also set the public URL, LLM model and registry.
 
+Prefer a browser? Run `bordo platform install && bordo platform up`, open the console at `http://your-server:3000` (login: `bordo platform password`), and finish there: it asks for the DeepSeek key, then walks you through connecting GitHub. For the one-click GitHub code, set `BORDO_GITHUB_CLIENT_ID` (an OAuth App with Device Flow on) in `~/.bordo/deploy/.env`; without it the console takes a personal access token instead.
+
 Prefer the steps one at a time? They still work: `bordo platform install`, `bordo platform up`, `bordo platform token`, `bordo setup`, `bordo github login`.
 
 That's it. Bordo is running.
