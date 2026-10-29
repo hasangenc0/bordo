@@ -60,7 +60,8 @@ func TestPullTokenProblem(t *testing.T) {
 		t.Error("fine-grained PATs must be flagged")
 	}
 	for scopes, wantProblem := range map[string]bool{
-		"repo, workflow, write:packages":                true,
+		"repo, workflow":                                true,
+		"repo, workflow, write:packages":                false, // verified against ghcr.io at deploy time instead
 		"repo, workflow, write:packages, read:packages": false,
 	} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

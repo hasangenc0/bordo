@@ -91,3 +91,15 @@ func TestOutdatedReconcilerIsFlaggedInTheReleaseLog(t *testing.T) {
 		t.Errorf("current reconciler flagged as outdated: %q", got)
 	}
 }
+
+func TestFirstGHCRRepo(t *testing.T) {
+	for in, want := range map[string]string{
+		"image: ghcr.io/Owner/City-Events-API:abc123\n": "owner/city-events-api",
+		`image: "ghcr.io/o/app@sha256:xx"`:              "o/app",
+		"image: nginx":                                  "",
+	} {
+		if got := firstGHCRRepo(in); got != want {
+			t.Errorf("firstGHCRRepo(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

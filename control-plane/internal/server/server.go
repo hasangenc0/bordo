@@ -3,6 +3,7 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -65,6 +66,16 @@ type Server struct {
 	// on their next pull; it is cleared once delivered.
 	reconcilerRevs map[string]int
 	restartAsk     map[string]bool
+	// pullChecks remembers the last ghcr.io pull verification per region, so the 30s pull
+	// loop does not query the registry every time.
+	pullChecks map[string]pullCheck
+}
+
+type pullCheck struct {
+	at     time.Time
+	repo   string
+	tokSig string
+	result string
 }
 
 // reconcilerInfo says whether a region's on-cluster reconciler is current.
@@ -585,7 +596,13 @@ func (s *Server) handleFleetDesiredState(w http.ResponseWriter, r *http.Request)
 			note = "NOT shipped: GitHub is not connected (run 'bordo github login')"
 		default:
 			if secret, serr := fleet.RenderImagePullSecret("bordo-apps", "ghcr.io", owner, tok); serr == nil {
+				repo := firstGHCRRepo(manifests) // before the secret is prepended
 				manifests = secret + "---\n" + manifests
+				if problem := s.verifyPull(r.Context(), region, owner, tok, repo); problem != "" {
+					note = "shipped, but ghcr.io will refuse the pull: " + problem
+				} else {
+					note = "shipped (ghcr.io accepts it)"
+				}
 			} else {
 				note = "NOT shipped: " + serr.Error()
 			}
@@ -823,6 +840,43 @@ func (s *Server) recordRegionPull(ctx context.Context, region string) {
 		ON CONFLICT(region_name, node_name) DO UPDATE SET
 			ready = 1, last_heartbeat = excluded.last_heartbeat, updated_at = excluded.updated_at`,
 		region+":reconciler", region, now, now)
+}
+
+// verifyPull checks with ghcr.io that tok can pull repo, at most every 5 minutes per region and
+// token (a changed token or repo is checked again at once).
+func (s *Server) verifyPull(ctx context.Context, region, owner, tok, repo string) string {
+	if repo == "" {
+		return ""
+	}
+	sig := fmt.Sprintf("%x", sha256.Sum256([]byte(tok)))[:16]
+	s.workloadsMu.RLock()
+	c, ok := s.pullChecks[region]
+	s.workloadsMu.RUnlock()
+	if ok && c.repo == repo && c.tokSig == sig && time.Since(c.at) < 5*time.Minute {
+		return c.result
+	}
+	result := githubpkg.VerifyGHCRPull(ctx, owner, tok, repo)
+	s.workloadsMu.Lock()
+	if s.pullChecks == nil {
+		s.pullChecks = map[string]pullCheck{}
+	}
+	s.pullChecks[region] = pullCheck{at: time.Now(), repo: repo, tokSig: sig, result: result}
+	s.workloadsMu.Unlock()
+	return result
+}
+
+// firstGHCRRepo returns "owner/name" of the first ghcr.io image in the manifests, or "".
+func firstGHCRRepo(manifests string) string {
+	i := strings.Index(manifests, "ghcr.io/")
+	if i < 0 {
+		return ""
+	}
+	rest := manifests[i+len("ghcr.io/"):]
+	end := strings.IndexAny(rest, ":@\"' \t\r\n")
+	if end < 0 {
+		end = len(rest)
+	}
+	return strings.ToLower(rest[:end])
 }
 
 // firstGHCROwner returns the owner from the first ghcr.io/<owner>/... image

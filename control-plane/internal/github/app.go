@@ -481,7 +481,9 @@ func PullTokenProblem(token string) string {
 		return ""
 	}
 	for _, sc := range strings.Split(header, ",") {
-		if strings.TrimSpace(sc) == "read:packages" {
+		// write:packages is accepted too: GitHub may report it without the read scope it covers.
+		// Whether the cluster can really pull is verified against ghcr.io at deploy time.
+		if sc = strings.TrimSpace(sc); sc == "read:packages" || sc == "write:packages" {
 			return ""
 		}
 	}
