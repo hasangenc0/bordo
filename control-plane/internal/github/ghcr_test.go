@@ -51,3 +51,27 @@ func TestVerifyGHCRPull(t *testing.T) {
 		t.Errorf("an unreadable grant is inconclusive, got %q", got)
 	}
 }
+
+func TestInspectToken(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		scopes string
+		valid  bool
+	}{{200, "repo, write:packages", true}, {401, "", false}} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if tc.scopes != "" {
+				w.Header().Set("X-OAuth-Scopes", tc.scopes)
+			}
+			w.WriteHeader(tc.status)
+			_, _ = w.Write([]byte(`{"login":"me"}`))
+		}))
+		old := githubAPIBase
+		githubAPIBase = srv.URL
+		got := InspectToken(context.Background(), "gho_abcdefghij")
+		githubAPIBase = old
+		srv.Close()
+		if got.Valid != tc.valid || got.Status != tc.status || got.Scopes != tc.scopes || got.Hint != "gho_abcd" {
+			t.Errorf("status %d: got %+v", tc.status, got)
+		}
+	}
+}

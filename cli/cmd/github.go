@@ -82,6 +82,13 @@ func githubStatusCmd() *cobra.Command {
 				AppSlug        string `json:"app_slug"`
 				InstallationID int64  `json:"installation_id"`
 				UserAuthorized bool   `json:"user_authorized"`
+				UserToken      *struct {
+					Hint   string `json:"hint"`
+					Valid  bool   `json:"valid"`
+					Status int    `json:"status"`
+					Scopes string `json:"scopes"`
+					Login  string `json:"login"`
+				} `json:"user_token"`
 			}
 			if err := json.Unmarshal(raw, &status); err != nil {
 				return err
@@ -105,6 +112,18 @@ func githubStatusCmd() *cobra.Command {
 			}
 			fmt.Println()
 			fmt.Printf("User OAuth authorized:  %s\n", check(status.UserAuthorized))
+			if t := status.UserToken; t != nil {
+				fmt.Printf("  stored token:         %s…  GitHub says: %s", t.Hint, check(t.Valid))
+				switch {
+				case t.Status == 0:
+					fmt.Print("  (GitHub unreachable)")
+				case !t.Valid:
+					fmt.Printf("  (HTTP %d: revoked or expired, run 'bordo github login')", t.Status)
+				default:
+					fmt.Printf("  (user %s, scopes: %s)", t.Login, t.Scopes)
+				}
+				fmt.Println()
+			}
 
 			if !status.AppRegistered {
 				fmt.Println("\nNext step: run `bordo github setup` to register a GitHub App.")

@@ -340,7 +340,14 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 		appSlug = creds.AppSlug
 	}
 
+	var tokenInfo *TokenInfo
+	if userToken != "" {
+		ti := InspectToken(r.Context(), userToken)
+		tokenInfo = &ti
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
+		"user_token":            tokenInfo,
 		"app_registered":        appRegistered,
 		"app_id":                appID,
 		"app_slug":              appSlug,

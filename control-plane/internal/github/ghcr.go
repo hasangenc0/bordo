@@ -74,3 +74,41 @@ func VerifyGHCRPull(ctx context.Context, username, token, repository string) str
 	}
 	return fmt.Sprintf("ghcr.io accepts the credential but grants no pull access to %s: the token lacks read:packages, or the package is not visible to this account", repository)
 }
+
+// TokenInfo says what GitHub currently thinks of a stored token.
+type TokenInfo struct {
+	Hint   string `json:"hint"`   // first characters only, to compare with the token a cluster holds
+	Valid  bool   `json:"valid"`  // GitHub accepts it
+	Status int    `json:"status"` // HTTP status of the check (0: GitHub unreachable)
+	Scopes string `json:"scopes,omitempty"`
+	Login  string `json:"login,omitempty"`
+}
+
+// InspectToken asks GitHub whether token is still accepted and which scopes it carries. A token
+// that has been revoked (GitHub keeps only a handful per user and OAuth app) answers 401.
+func InspectToken(ctx context.Context, token string) TokenInfo {
+	info := TokenInfo{}
+	if len(token) >= 8 {
+		info.Hint = token[:8]
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, githubAPIBase+"/user", nil)
+	if err != nil {
+		return info
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return info
+	}
+	defer resp.Body.Close()
+	info.Status = resp.StatusCode
+	info.Valid = resp.StatusCode == http.StatusOK
+	info.Scopes = resp.Header.Get("X-OAuth-Scopes")
+	var u struct {
+		Login string `json:"login"`
+	}
+	_ = json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&u)
+	info.Login = u.Login
+	return info
+}
