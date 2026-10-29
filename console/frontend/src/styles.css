@@ -1112,8 +1112,20 @@ a.rail-row:hover { color: var(--accent-hover); text-decoration: underline; }
 .md ul, .md ol { padding-left: 20px; }
 .md li + li { margin-top: 2px; }
 .md-heading { font-weight: 600; }
+.md-h1 { font-size: 1.25em; }
+.md-h2 { font-size: 1.15em; }
+.md-h3 { font-size: 1.05em; }
+.md > .md-heading { margin-top: 14px; }
+.md ul ul, .md ul ol, .md ol ul, .md ol ol { margin-top: 2px; }
+.md-rule { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
+.md-quote { margin-left: 0; padding-left: 12px; border-left: 3px solid var(--border); color: var(--text-muted); }
+.md-table-wrap { overflow-x: auto; }
+.md table { border-collapse: collapse; font-size: 13px; min-width: 50%; }
+.md th, .md td { border: 1px solid var(--border); padding: 5px 10px; text-align: left; vertical-align: top; }
+.md th { background: var(--surface); font-weight: 600; }
+.md em { font-style: italic; }
 .md-code { font-family: var(--mono); font-size: 12px; background: var(--border); padding: 1px 5px; border-radius: 4px; }
-.md a { color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
+.md a { color: var(--text); text-decoration: underline; text-underline-offset: 2px; word-break: break-all; }
 .md-fence { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--bg); }
 .md-fence-bar { display: flex; justify-content: space-between; align-items: center; padding: 4px 10px; font-size: 11px; color: var(--text-muted); background: var(--surface); border-bottom: 1px solid var(--border); }
 .md-fence pre { margin: 0; padding: 10px 12px; font-family: var(--mono); font-size: 12px; overflow-x: auto; white-space: pre; }
