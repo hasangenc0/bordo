@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"crypto/rand"
 	_ "embed"
 	"encoding/hex"
@@ -346,6 +347,8 @@ func upgradeStack(dir string, force bool) error {
 		}
 	}
 
+	syncComposeFile(dir)
+
 	fmt.Println("Pulling latest Bordo images...")
 	if err := composeInDir(dir, "pull").Run(); err != nil {
 		return fmt.Errorf("docker compose pull: %w", err)
@@ -371,6 +374,29 @@ func upgradeStack(dir string, force bool) error {
 	}
 	fmt.Println("Upgrade complete.")
 	return nil
+}
+
+// syncComposeFile brings the compose file up to date with this CLI, because new releases add
+// services (the sandbox the agent runs commands in). A CLI-managed install owns its file, so it is
+// rewritten when it differs; .env and the data volumes are never touched. A hand-managed file (a
+// repo checkout such as /opt/bordo) is left alone, with a note when it lacks the sandbox.
+func syncComposeFile(dir string) {
+	path := filepath.Join(dir, "docker-compose.yml")
+	current, _ := os.ReadFile(path)
+	if sameDir(dir, platformDir()) {
+		if !bytes.Equal(current, composeYAML) {
+			if err := os.WriteFile(path, composeYAML, 0o644); err != nil {
+				fmt.Printf("Could not refresh %s: %v\n", path, err)
+				return
+			}
+			fmt.Printf("Updated %s to match this version.\n", path)
+		}
+		return
+	}
+	if len(current) > 0 && !strings.Contains(string(current), "bordo-sandbox") {
+		fmt.Printf("\nNote: %s has no bordo-sandbox service, so the agent cannot run commands (code_exec).\n"+
+			"It is managed by hand: update it from the Bordo repo (e.g. 'git pull' in the checkout), then run 'bordo upgrade' again.\n\n", path)
+	}
 }
 
 func sameDir(a, b string) bool {

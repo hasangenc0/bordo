@@ -423,3 +423,40 @@ func TestMergeToolIsApprovalGated(t *testing.T) {
 	}
 	t.Fatal("code_merge_pr not registered")
 }
+
+func TestExecToolCallsSandbox(t *testing.T) {
+	c, _ := setup(t)
+	var got map[string]any
+	sb := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/exec" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = w.Write([]byte(`{"exit_code":1,"output":"FAIL\n","duration_ms":12}`))
+	}))
+	defer sb.Close()
+	t.Setenv("BORDO_SANDBOX_URL", sb.URL)
+
+	if _, err := call(t, c, "code_checkout", map[string]any{"project": "p-1"}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := call(t, c, "code_exec", map[string]any{"project": "p-1", "command": "go test ./...", "timeout_seconds": float64(30)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := res.(map[string]any)
+	if m["exit_code"] != float64(1) || got["project"] != "p-1" || got["command"] != "go test ./..." || got["timeout_seconds"] != float64(30) {
+		t.Fatalf("result %v, sandbox saw %v", m, got)
+	}
+}
+
+func TestExecToolAbsentWithoutSandbox(t *testing.T) {
+	c, _ := setup(t)
+	t.Setenv("BORDO_SANDBOX_URL", "")
+	for _, tl := range c.Tools() {
+		if tl.Name == "code_exec" {
+			t.Fatal("code_exec must not be registered without a sandbox")
+		}
+	}
+}

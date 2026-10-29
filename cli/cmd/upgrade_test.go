@@ -104,3 +104,29 @@ func TestUpgradeBackfillsConsolePasswordOnlyInExistingEnv(t *testing.T) {
 		t.Error("must not create a .env where there was none")
 	}
 }
+
+func TestUpgradeRefreshesCLIManagedComposeFile(t *testing.T) {
+	dir := managedDir(t) // starts with a stale "services: {}" file
+	fakeDocker(t, "")
+	if err := upgradeStack(dir, true); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "docker-compose.yml"))
+	if !strings.Contains(string(got), "bordo-sandbox") {
+		t.Fatalf("compose file was not refreshed from the CLI's embedded copy:\n%s", got)
+	}
+}
+
+func TestUpgradeLeavesHandManagedComposeFileAlone(t *testing.T) {
+	managedDir(t)
+	other := t.TempDir()
+	orig := []byte("services: {}\n")
+	_ = os.WriteFile(filepath.Join(other, "docker-compose.yml"), orig, 0o644)
+	fakeDocker(t, "")
+	if err := upgradeStack(other, false); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(other, "docker-compose.yml")); !strings.EqualFold(string(got), string(orig)) {
+		t.Fatalf("a hand-managed compose file must not be rewritten, got:\n%s", got)
+	}
+}

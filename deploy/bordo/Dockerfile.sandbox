@@ -1,0 +1,34 @@
+FROM golang:1.22-alpine AS build
+WORKDIR /workspace
+
+COPY go.work go.work.sum ./
+
+COPY agent/go.mod agent/go.sum ./agent/
+COPY build/go.mod build/go.sum ./build/
+COPY cli/go.mod cli/go.sum ./cli/
+COPY control-plane/go.mod control-plane/go.sum ./control-plane/
+COPY fleet/go.mod fleet/go.sum ./fleet/
+COPY observe/go.mod observe/go.sum ./observe/
+COPY release/go.mod release/go.sum ./release/
+COPY scripts/go.mod scripts/go.sum ./scripts/
+
+RUN go work sync
+
+COPY agent/ agent/
+COPY build/ build/
+COPY cli/ cli/
+COPY control-plane/ control-plane/
+COPY fleet/ fleet/
+COPY observe/ observe/
+COPY release/ release/
+COPY scripts/ scripts/
+
+RUN go build -ldflags="-s -w" -o /bordo-sandbox ./agent/cmd/bordo-sandbox
+
+# The runtime image carries the toolchains the agent builds and tests with. It holds no secrets and
+# is started on a network that cannot reach Bordo's own services.
+FROM golang:1.22-alpine
+RUN apk add --no-cache ca-certificates git bash curl make gcc musl-dev nodejs npm python3 py3-pip openjdk17-jdk maven
+COPY --from=build /bordo-sandbox /usr/local/bin/bordo-sandbox
+EXPOSE 7403
+ENTRYPOINT ["bordo-sandbox"]

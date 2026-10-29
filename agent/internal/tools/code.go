@@ -424,7 +424,7 @@ func (c *CodeTools) tool(name, desc string, props map[string]any, required []str
 
 // Tools returns all code tools.
 func (c *CodeTools) Tools() []*Tool {
-	return []*Tool{
+	tools := []*Tool{
 		c.tool("code_checkout",
 			"Prepare the project's source for editing: clones the repo if needed, fetches, and switches to a working branch (default bordo/change-<timestamp>). Call this first before any other code_* tool. Resumes the current working branch if one exists.",
 			map[string]any{"branch": prop("string", "Working branch name (optional)")}, nil, c.checkout),
@@ -473,6 +473,10 @@ func (c *CodeTools) Tools() []*Tool {
 			}, []string{"title"}, c.openPR),
 		c.mergeTool(),
 	}
+	if u := os.Getenv("BORDO_SANDBOX_URL"); u != "" {
+		tools = append(tools, c.execTool(u))
+	}
+	return tools
 }
 
 // mergeTool merges a pull request. It changes the default branch (and so triggers builds), so it

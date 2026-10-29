@@ -25,6 +25,9 @@ jobs:
           - name: bordo-agent
             image: ghcr.io/hasangenc0/bordo-agent
             dockerfile: deploy/bordo/Dockerfile.agent
+          - name: bordo-sandbox
+            image: ghcr.io/hasangenc0/bordo-sandbox
+            dockerfile: deploy/bordo/Dockerfile.sandbox
           - name: bordo-console
             image: ghcr.io/hasangenc0/bordo-console
             dockerfile: deploy/bordo/Dockerfile.console

@@ -44,13 +44,53 @@ services:
       # - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - BORDO_CHAT_DB=/data/agent-chats.db
       - BORDO_WORKSPACE=/data/workspaces
+      - BORDO_SANDBOX_URL=http://bordo-sandbox:7403
+    networks:
+      - default
+      - sandbox
     mem_limit: 512m
     memswap_limit: 512m
     volumes:
       - agent-data:/data
+      - agent-workspaces:/data/workspaces
     depends_on:
       bordod:
         condition: service_healthy
+    restart: unless-stopped
+
+  # Runs the agent's shell commands (code_exec). It sees a read-only copy of the checkouts, holds no
+  # tokens, runs commands as an unprivileged user, and sits on its own network that cannot reach
+  # bordod or the other services; the agent is the only container it shares a network with.
+  bordo-sandbox:
+    image: ${SANDBOX_IMAGE:-ghcr.io/hasangenc0/bordo-sandbox:latest}
+    build:
+      context: ../..
+      dockerfile: deploy/bordo/Dockerfile.sandbox
+    environment:
+      - BORDO_WORKSPACE=/workspaces
+    volumes:
+      - agent-workspaces:/workspaces:ro
+      - sandbox-cache:/cache
+    networks:
+      - sandbox
+    tmpfs:
+      - /work:size=1g,mode=0755
+      - /tmp:size=256m
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - KILL
+      - DAC_READ_SEARCH
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1g
+    memswap_limit: 1g
+    cpus: 1.5
+    pids_limit: 512
     restart: unless-stopped
 
   bordo-console:
@@ -69,6 +109,11 @@ services:
       - bordo-agent
     restart: unless-stopped
 
+networks:
+  sandbox: {}
+
 volumes:
   bordod-data:
   agent-data:
+  agent-workspaces:
+  sandbox-cache:
