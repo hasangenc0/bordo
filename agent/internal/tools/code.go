@@ -471,7 +471,105 @@ func (c *CodeTools) Tools() []*Tool {
 				"title": prop("string", "PR title"),
 				"body":  prop("string", "PR description (optional)"),
 			}, []string{"title"}, c.openPR),
+		c.mergeTool(),
 	}
+}
+
+// mergeTool merges a pull request. It changes the default branch (and so triggers builds), so it
+// is gated: the user sees an approval card naming the PR and the agent waits for their decision.
+func (c *CodeTools) mergeTool() *Tool {
+	t := c.tool("code_merge_pr",
+		"Merge an open pull request into the default branch. The user must approve first (an approval card appears and you wait for it). Squash by default. Merging pushes to the default branch, which starts a build; afterwards trigger a build if none started and wait for it.",
+		map[string]any{
+			"number": prop("integer", "Pull request number"),
+			"method": map[string]any{"type": "string", "enum": []string{"squash", "merge", "rebase"}, "description": "Merge method (default squash)"},
+		}, []string{"number"}, c.mergePR)
+	t.ApprovalSummary = func(params map[string]any) string {
+		method := str(params, "method")
+		if method == "" {
+			method = "squash"
+		}
+		return fmt.Sprintf("Merge PR #%d of %s (%s) into the default branch", intParam(params, "number"), str(params, "project"), method)
+	}
+	return t
+}
+
+func (c *CodeTools) mergePR(ctx context.Context, w *ws, params map[string]any) (any, error) {
+	n := intParam(params, "number")
+	if n <= 0 {
+		return nil, errors.New("number is required")
+	}
+	method := str(params, "method")
+	if method == "" {
+		method = "squash"
+	}
+	if method != "squash" && method != "merge" && method != "rebase" {
+		return nil, errors.New("method must be squash, merge or rebase")
+	}
+	prURL := fmt.Sprintf("%s/repos/%s/%s/pulls/%d", c.apiBase, w.owner, w.repo, n)
+	var pr struct {
+		State  string `json:"state"`
+		Merged bool   `json:"merged"`
+		Draft  bool   `json:"draft"`
+		Title  string `json:"title"`
+		Base   struct {
+			Ref string `json:"ref"`
+		} `json:"base"`
+		Head struct {
+			SHA string `json:"sha"`
+		} `json:"head"`
+	}
+	if err := c.githubJSON(ctx, w.token, http.MethodGet, prURL, nil, &pr); err != nil {
+		return nil, err
+	}
+	switch {
+	case pr.Merged:
+		return nil, fmt.Errorf("PR #%d is already merged", n)
+	case pr.State != "open":
+		return nil, fmt.Errorf("PR #%d is %s, not open", n, pr.State)
+	case pr.Draft:
+		return nil, fmt.Errorf("PR #%d is a draft; mark it ready for review first", n)
+	}
+	var out struct {
+		SHA     string `json:"sha"`
+		Merged  bool   `json:"merged"`
+		Message string `json:"message"`
+	}
+	// Pinning sha makes GitHub refuse the merge if the branch moved after we looked at it.
+	body := map[string]string{"merge_method": method, "sha": pr.Head.SHA}
+	if err := c.githubJSON(ctx, w.token, http.MethodPut, prURL+"/merge", body, &out); err != nil {
+		return nil, err
+	}
+	return map[string]any{"merged": out.Merged, "merge_commit": out.SHA, "pr": n, "title": pr.Title, "into": pr.Base.Ref, "method": method,
+		"next": "a build starts from the push to the default branch; check build_list for it, or build_trigger if none appears"}, nil
+}
+
+// githubJSON performs an authenticated GitHub API call and decodes the JSON response.
+func (c *CodeTools) githubJSON(ctx context.Context, token, method, url string, body, out any) error {
+	var rdr io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		rdr = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, rdr)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return fmt.Errorf("github: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("github %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	return json.Unmarshal(raw, out)
 }
 
 // ── tool implementations ─────────────────────────────────────────────────────

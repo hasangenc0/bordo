@@ -12,6 +12,11 @@ type Tool struct {
 	Description string
 	Schema      map[string]any
 	CallFn      func(ctx context.Context, params map[string]any) (any, error)
+
+	// ApprovalSummary, when set, makes the tool wait for the user's approval before it runs: the
+	// returned text is what the approval card shows. Tools that change shared state (merging a PR)
+	// set it; read-only and branch-local tools leave it nil.
+	ApprovalSummary func(params map[string]any) string
 }
 
 func (t *Tool) Call(ctx context.Context, params map[string]any) (any, error) {

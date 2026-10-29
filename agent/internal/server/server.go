@@ -289,6 +289,16 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 				if tool == nil {
 					return nil, fmt.Errorf("unknown tool: %s", name)
 				}
+				if tool.ApprovalSummary != nil {
+					emitAction := func(ev ActionEvent) {
+						b, _ := json.Marshal(ev)
+						_ = conn.WriteMessage(websocket.TextMessage, b)
+					}
+					if aerr := s.requestApproval(ctx, name, actionKindFromTool(name), tool.ApprovalSummary(input), input, emitAction); aerr != nil {
+						_ = sendFrame(WSFrame{Type: "tool_result", ToolName: name, Error: aerr.Error()})
+						return nil, aerr
+					}
+				}
 				result, err := tool.Call(ctx, input)
 				trf := WSFrame{Type: "tool_result", ToolName: name}
 				if err != nil {
@@ -304,6 +314,9 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 					trf.Data = result
 				}
 				_ = sendFrame(trf)
+				if tool.ApprovalSummary != nil {
+					return result, err // its approval card already showed the outcome
+				}
 				// Emit action event after tool execution.
 				ae := ActionEvent{
 					Type:         "action",
@@ -606,6 +619,8 @@ func actionKindFromTool(name string) string {
 		return "delete"
 	case strings.HasPrefix(name, "restart"):
 		return "restart"
+	case name == "code_merge_pr":
+		return "merge"
 	default:
 		return name
 	}

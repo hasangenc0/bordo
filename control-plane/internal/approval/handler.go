@@ -15,6 +15,7 @@ func NewHandler(store ApprovalStore) http.Handler {
 	h := &approvalHandler{store: store}
 	r.Get("/", h.list)
 	r.Post("/", h.create)
+	r.Get("/{id}", h.get)
 	r.Post("/{id}/approve", h.approve)
 	r.Post("/{id}/reject", h.reject)
 	return r
@@ -69,6 +70,15 @@ func (h *approvalHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, a)
+}
+
+func (h *approvalHandler) get(w http.ResponseWriter, r *http.Request) {
+	a, err := h.store.GetApproval(r.Context(), chi.URLParam(r, "id"))
+	if err != nil || a == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "approval not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, a)
 }
 
 func (h *approvalHandler) approve(w http.ResponseWriter, r *http.Request) {

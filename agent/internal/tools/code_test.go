@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -364,4 +365,61 @@ func TestGitErrorsAreScrubbed(t *testing.T) {
 	if strings.Contains(err.Error(), "tok") && !strings.Contains(err.Error(), "***") {
 		t.Errorf("token not scrubbed: %v", err)
 	}
+}
+
+func TestMergePR(t *testing.T) {
+	c, _ := setup(t)
+	var merged bool
+	var mergeBody map[string]string
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/app/pulls/7":
+			_, _ = w.Write([]byte(`{"state":"open","merged":false,"draft":false,"title":"T","base":{"ref":"main"},"head":{"sha":"abc123"}}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/app/pulls/7/merge":
+			_ = json.NewDecoder(r.Body).Decode(&mergeBody)
+			merged = true
+			_, _ = w.Write([]byte(`{"sha":"def456","merged":true,"message":"Pull Request successfully merged"}`))
+		case r.URL.Path == "/repos/acme/app/pulls/8":
+			_, _ = w.Write([]byte(`{"state":"open","merged":false,"draft":true,"base":{"ref":"main"},"head":{"sha":"x"}}`))
+		case r.URL.Path == "/repos/acme/app/pulls/9":
+			_, _ = w.Write([]byte(`{"state":"closed","merged":true,"base":{"ref":"main"},"head":{"sha":"x"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer gh.Close()
+	c.apiBase = gh.URL
+
+	res, err := call(t, c, "code_merge_pr", map[string]any{"project": "p-1", "number": float64(7)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := res.(map[string]any)
+	if !merged || m["merged"] != true || m["merge_commit"] != "def456" || mergeBody["merge_method"] != "squash" || mergeBody["sha"] != "abc123" {
+		t.Fatalf("merge result %v body %v", m, mergeBody)
+	}
+	for _, n := range []float64{8, 9} {
+		if _, err := call(t, c, "code_merge_pr", map[string]any{"project": "p-1", "number": n}); err == nil {
+			t.Errorf("PR %v must not be mergeable (draft / already merged)", n)
+		}
+	}
+}
+
+func TestMergeToolIsApprovalGated(t *testing.T) {
+	c, _ := setup(t)
+	for _, tl := range c.Tools() {
+		if tl.Name == "code_merge_pr" {
+			if tl.ApprovalSummary == nil {
+				t.Fatal("code_merge_pr must require approval")
+			}
+			if got := tl.ApprovalSummary(map[string]any{"project": "my-app", "number": float64(7)}); !strings.Contains(got, "PR #7") || !strings.Contains(got, "my-app") {
+				t.Fatalf("summary = %q", got)
+			}
+			return
+		}
+		if tl.ApprovalSummary != nil {
+			t.Errorf("%s must not be gated", tl.Name)
+		}
+	}
+	t.Fatal("code_merge_pr not registered")
 }
