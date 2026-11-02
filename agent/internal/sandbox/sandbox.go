@@ -6,6 +6,13 @@
 // environment and a hard timeout, and deletes the copy. Nothing the command does persists or
 // reaches the real repository: the agent edits files through code_edit_file, and uses this only
 // to build, test and inspect.
+//
+// Teardown follows what multi-tenant runners such as Piston and isolate do. Each concurrent run gets
+// its own slot with a dedicated UID, so when the command's shell exits everything still running as
+// that UID (background jobs, nohup'd or setsid'd daemons, build-tool daemons) is stopped and killed,
+// and files it left in the shared tmpfs mounts are removed. The scratch copy is deleted as that UID,
+// because the server runs as root without CAP_DAC_OVERRIDE and cannot delete files owned by another
+// user. Leftover copies from a previous process are swept on startup.
 package sandbox
 
 import (
@@ -16,12 +23,15 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -41,12 +51,16 @@ var projectRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 type Config struct {
 	WorkspaceRoot string // read-only mount holding one directory per project
 	WorkRoot      string // scratch space for the per-request copies
-	CacheDir      string // persistent dependency caches (module/npm downloads), owned by the unprivileged user
-	// UID/GID of the unprivileged user commands run as. DropPrivileges is off only in tests,
-	// which do not run as root.
+	CacheDir      string // persistent dependency caches (module/npm downloads), one directory per slot
+	// Commands in slot i run as UID+i:GID, a user nothing else in the container uses, so teardown can
+	// kill every process of that user without touching other runs. DropPrivileges is off only in
+	// tests, which do not run as root.
 	DropPrivileges bool
 	UID, GID       uint32
 	MaxParallel    int
+	// SharedTmp lists world-writable directories outside the scratch copy (tmpfs mounts) where
+	// commands may leave files; teardown removes the slot user's files from them.
+	SharedTmp []string
 }
 
 // Request is the body of POST /exec.
@@ -67,8 +81,11 @@ type Result struct {
 
 // Server is the sandbox HTTP handler.
 type Server struct {
-	cfg Config
-	sem chan struct{}
+	cfg   Config
+	slots chan int // free slot indexes; a slot is a UID and a cache directory
+
+	mu     sync.Mutex
+	active map[string]bool // scratch directories of runs in progress
 }
 
 // New returns a sandbox Server.
@@ -77,7 +94,84 @@ func New(cfg Config) *Server {
 	if n <= 0 {
 		n = 2
 	}
-	return &Server{cfg: cfg, sem: make(chan struct{}, n)}
+	s := &Server{cfg: cfg, slots: make(chan int, n), active: map[string]bool{}}
+	for i := 0; i < n; i++ {
+		s.slots <- i
+	}
+	return s
+}
+
+func (s *Server) slotUID(slot int) int { return int(s.cfg.UID) + slot }
+
+// Prepare readies the server before it takes requests: it kills processes and deletes scratch
+// copies left behind by a previous instance, and creates each slot's cache directory.
+func (s *Server) Prepare() error {
+	if err := os.MkdirAll(s.cfg.WorkRoot, 0o755); err != nil {
+		return err
+	}
+	for i := 0; i < cap(s.slots); i++ {
+		s.reap(s.slotUID(i), "")
+	}
+	s.sweep()
+	if s.cfg.CacheDir == "" {
+		return nil
+	}
+	if err := os.MkdirAll(s.cfg.CacheDir, 0o755); err != nil {
+		return err
+	}
+	// Caches used to be shared by all runs at the top of CacheDir; they are per slot now.
+	for _, legacy := range []string{"go-build", "go", "npm", "pip"} {
+		dir := filepath.Join(s.cfg.CacheDir, legacy)
+		if _, err := os.Lstat(dir); err == nil {
+			_ = s.removeTree(dir, ownerOf(dir))
+		}
+	}
+	for i := 0; i < cap(s.slots); i++ {
+		dir := filepath.Join(s.cfg.CacheDir, "slot-"+strconv.Itoa(i))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+		if s.cfg.DropPrivileges {
+			if err := chownTreeIfNeeded(dir, s.slotUID(i), int(s.cfg.GID)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// Janitor deletes scratch copies that no run owns, every interval, until ctx is done. Runs clean up
+// after themselves; this catches what a crash in the middle of one would leave.
+func (s *Server) Janitor(ctx context.Context, interval time.Duration) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			s.sweep()
+		}
+	}
+}
+
+func (s *Server) sweep() {
+	entries, err := os.ReadDir(s.cfg.WorkRoot)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		dir := filepath.Join(s.cfg.WorkRoot, e.Name())
+		s.mu.Lock()
+		busy := s.active[dir]
+		s.mu.Unlock()
+		if busy {
+			continue
+		}
+		if err := s.removeTree(dir, ownerOf(dir)); err != nil {
+			log.Printf("bordo-sandbox: removing stale %s: %v", dir, err)
+		}
+	}
 }
 
 // Handler serves /healthz and POST /exec.
@@ -113,12 +207,6 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	if timeout > maxTimeout {
 		timeout = maxTimeout
 	}
-	select {
-	case s.sem <- struct{}{}:
-		defer func() { <-s.sem }()
-	case <-r.Context().Done():
-		return
-	}
 	res, err := s.Run(r.Context(), req.Project, req.Command, timeout)
 	if err != nil {
 		writeErr(w, http.StatusUnprocessableEntity, err.Error())
@@ -134,39 +222,100 @@ func writeErr(w http.ResponseWriter, code int, msg string) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
-// Run copies the project's workspace, runs command in the copy and returns its output.
+// Run waits for a free slot, copies the project's workspace, runs command in the copy and returns its
+// output. Whatever the command started is killed and the copy deleted before Run returns.
 func (s *Server) Run(ctx context.Context, project, command string, timeout time.Duration) (*Result, error) {
 	src := filepath.Join(s.cfg.WorkspaceRoot, project)
 	if st, err := os.Stat(src); err != nil || !st.IsDir() {
 		return nil, fmt.Errorf("no workspace for project %q: run code_checkout first", project)
 	}
+	var slot int
+	select {
+	case slot = <-s.slots:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	uid := s.slotUID(slot)
 	if err := os.MkdirAll(s.cfg.WorkRoot, 0o755); err != nil {
+		s.slots <- slot
 		return nil, err
 	}
 	work := filepath.Join(s.cfg.WorkRoot, uuid.NewString())
-	defer os.RemoveAll(work)
-	if err := copyTree(src, work, s.cfg.DropPrivileges, int(s.cfg.UID), int(s.cfg.GID)); err != nil {
+	s.mu.Lock()
+	s.active[work] = true
+	s.mu.Unlock()
+	defer func() {
+		// Teardown must finish before the slot is reused, so the next run starts with no processes
+		// of its user alive and nothing of the last run's on the tmpfs.
+		s.reap(uid, work)
+		s.mu.Lock()
+		delete(s.active, work)
+		s.mu.Unlock()
+		s.slots <- slot
+	}()
+	if err := copyTree(src, work, s.cfg.DropPrivileges, uid, int(s.cfg.GID)); err != nil {
 		return nil, fmt.Errorf("preparing workspace copy: %w", err)
 	}
+	return s.execute(ctx, work, s.cacheDir(slot, work), uid, command, timeout)
+}
 
+func (s *Server) cacheDir(slot int, work string) string {
+	if s.cfg.CacheDir == "" {
+		return filepath.Join(work, ".cache")
+	}
+	return filepath.Join(s.cfg.CacheDir, "slot-"+strconv.Itoa(slot))
+}
+
+func (s *Server) execute(ctx context.Context, work, cache string, uid int, command string, timeout time.Duration) (*Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	// No core dumps: they land in the copy, which lives on a memory-backed tmpfs.
+	cmd := exec.CommandContext(ctx, "sh", "-c", "ulimit -c 0 2>/dev/null\n"+command)
 	cmd.Dir = work
-	cmd.Env = s.env(work)
+	cmd.Env = env(work, cache)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if s.cfg.DropPrivileges {
-		cmd.SysProcAttr.Credential = &syscall.Credential{Uid: s.cfg.UID, Gid: s.cfg.GID}
+		cmd.SysProcAttr.Credential = &syscall.Credential{Uid: uint32(uid), Gid: s.cfg.GID, Groups: []uint32{}}
 	}
-	// Kill the whole process group on timeout, not just the shell.
+	// Kill the whole process group on timeout or cancellation, not just the shell.
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
-	cmd.WaitDelay = 2 * time.Second
-	out := &capBuffer{limit: maxOutput}
-	cmd.Stdout, cmd.Stderr = out, out
 
+	// Hand the command a real pipe instead of an io.Writer, so Wait returns as soon as the shell
+	// exits rather than when every background job that inherited stdout has closed it.
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
+	cmd.Stdout, cmd.Stderr = pw, pw
+	out := &capBuffer{limit: maxOutput}
 	start := time.Now()
-	err := cmd.Run()
-	res := &Result{Output: out.String(), Truncated: out.truncated, DurationMS: time.Since(start).Milliseconds()}
+	if err := cmd.Start(); err != nil {
+		pr.Close()
+		pw.Close()
+		return nil, err
+	}
+	pw.Close()
+	copied := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(out, pr)
+		close(copied)
+	}()
+	err = cmd.Wait()
+	elapsed := time.Since(start)
+	pgid := cmd.Process.Pid
+	_ = syscall.Kill(-pgid, syscall.SIGKILL) // background jobs still in the group
+	if s.cfg.DropPrivileges {
+		s.killUser(uid) // and anything that left the group
+	}
+	select {
+	case <-copied:
+	case <-time.After(2 * time.Second):
+		// Something outside our reach still holds the pipe; stop reading.
+	}
+	pr.Close()
+	<-copied
+
+	res := &Result{Output: out.String(), Truncated: out.truncated, DurationMS: elapsed.Milliseconds()}
 	var exitErr *exec.ExitError
 	switch {
 	case err == nil:
@@ -180,12 +329,142 @@ func (s *Server) Run(ctx context.Context, project, command string, timeout time.
 	return res, nil
 }
 
-// env is the only environment commands see: no tokens, no service addresses.
-func (s *Server) env(home string) []string {
-	cache := s.cfg.CacheDir
-	if cache == "" {
-		cache = filepath.Join(home, ".cache")
+// reap kills every process of uid, removes uid's files from the shared tmpfs mounts and deletes
+// work (if set). Without privileges (tests) there is no dedicated user, so it only deletes work.
+func (s *Server) reap(uid int, work string) {
+	if s.cfg.DropPrivileges {
+		s.killUser(uid)
+		for _, dir := range s.cfg.SharedTmp {
+			entries, _ := os.ReadDir(dir)
+			for _, e := range entries {
+				path := filepath.Join(dir, e.Name())
+				if ownerOf(path) == uid {
+					_ = s.removeTree(path, uid)
+				}
+			}
+		}
 	}
+	if work != "" {
+		if err := s.removeTree(work, uid); err != nil {
+			log.Printf("bordo-sandbox: removing %s: %v", work, err)
+		}
+	}
+}
+
+// killUser stops, then kills, every process running as uid, and rescans until none is left.
+// Stopping everything first keeps a fork loop from replacing children faster than they die.
+func (s *Server) killUser(uid int) {
+	for i := 0; i < 20; i++ {
+		pids := processesOf(uid)
+		if len(pids) == 0 {
+			return
+		}
+		for _, pid := range pids {
+			_ = syscall.Kill(pid, syscall.SIGSTOP)
+		}
+		for _, pid := range pids {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	log.Printf("bordo-sandbox: processes of uid %d survived teardown", uid)
+}
+
+// removeTree deletes path. Its contents belong to the slot user, and root without CAP_DAC_OVERRIDE
+// may not unlink another user's files, so the user empties it first (making read-only directories,
+// such as Go's module cache, writable); root then removes what is left, which includes the top
+// entry when its parent is root-owned.
+func (s *Server) removeTree(path string, uid int) error {
+	if s.cfg.DropPrivileges && uid > 0 {
+		_ = s.asUser(uid, `chmod -R u+rwx "$1" 2>/dev/null; rm -rf "$1" 2>/dev/null; true`, path)
+	}
+	return os.RemoveAll(path)
+}
+
+// asUser runs a short shell script as uid with no environment.
+func (s *Server) asUser(uid int, script string, args ...string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sh", append([]string{"-c", script, "sh"}, args...)...)
+	cmd.Env = []string{"PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"}
+	cmd.Dir = "/"
+	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(uid), Gid: s.cfg.GID, Groups: []uint32{}}}
+	return cmd.Run()
+}
+
+// processesOf lists live (non-zombie) processes whose real, effective or saved UID is uid.
+func processesOf(uid int) []int {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil
+	}
+	want := strconv.Itoa(uid)
+	var pids []int
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		status, err := os.ReadFile(filepath.Join("/proc", e.Name(), "status"))
+		if err != nil {
+			continue
+		}
+		if procOwnedBy(string(status), want) {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
+}
+
+func procOwnedBy(status, uid string) bool {
+	owned, zombie := false, false
+	for _, line := range strings.Split(status, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 {
+			continue
+		}
+		switch f[0] {
+		case "State:":
+			zombie = f[1] == "Z" || f[1] == "X"
+		case "Uid:":
+			for _, id := range f[1:min(len(f), 4)] {
+				owned = owned || id == uid
+			}
+		}
+	}
+	return owned && !zombie
+}
+
+func ownerOf(path string) int {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return -1
+	}
+	if st, ok := info.Sys().(*syscall.Stat_t); ok {
+		return int(st.Uid)
+	}
+	return -1
+}
+
+// chownTreeIfNeeded hands dir and its contents to uid:gid when dir is not already theirs.
+func chownTreeIfNeeded(dir string, uid, gid int) error {
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if st, ok := info.Sys().(*syscall.Stat_t); ok && int(st.Uid) == uid && int(st.Gid) == gid {
+		return nil
+	}
+	return filepath.WalkDir(dir, func(path string, _ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		return os.Lchown(path, uid, gid)
+	})
+}
+
+// env is the only environment commands see: no tokens, no service addresses.
+func env(home, cache string) []string {
 	return []string{
 		"PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
 		"HOME=" + home,

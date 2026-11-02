@@ -28,7 +28,8 @@ RUN go build -ldflags="-s -w" -o /bordo-sandbox ./agent/cmd/bordo-sandbox
 # The runtime image carries the toolchains the agent builds and tests with. It holds no secrets and
 # is started on a network that cannot reach Bordo's own services.
 FROM golang:1.22-alpine
-RUN apk add --no-cache ca-certificates git bash curl make gcc musl-dev nodejs npm python3 py3-pip openjdk17-jdk maven
+RUN apk add --no-cache tini ca-certificates git bash curl make gcc musl-dev nodejs npm python3 py3-pip openjdk17-jdk maven
 COPY --from=build /bordo-sandbox /usr/local/bin/bordo-sandbox
 EXPOSE 7403
-ENTRYPOINT ["bordo-sandbox"]
+# tini is PID 1 so processes orphaned by commands are reaped instead of piling up as zombies.
+ENTRYPOINT ["/sbin/tini", "--", "bordo-sandbox"]

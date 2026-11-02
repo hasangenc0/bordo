@@ -3,10 +3,14 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/hasangenc0/bordo/agent/internal/sandbox"
@@ -19,8 +23,10 @@ func main() {
 		}
 		return d
 	}
-	uid, _ := strconv.Atoi(env("BORDO_SANDBOX_UID", "65534"))
-	gid, _ := strconv.Atoi(env("BORDO_SANDBOX_GID", "65534"))
+	// Slot i runs commands as BORDO_SANDBOX_UID+i, users nothing else in the container has.
+	uid, _ := strconv.Atoi(env("BORDO_SANDBOX_UID", "10000"))
+	gid, _ := strconv.Atoi(env("BORDO_SANDBOX_GID", "10000"))
+	parallel, _ := strconv.Atoi(env("BORDO_SANDBOX_PARALLEL", "2"))
 	cfg := sandbox.Config{
 		WorkspaceRoot:  env("BORDO_WORKSPACE", "/data/workspaces"),
 		WorkRoot:       env("BORDO_SANDBOX_WORK", "/work"),
@@ -28,20 +34,37 @@ func main() {
 		DropPrivileges: os.Getuid() == 0,
 		UID:            uint32(uid),
 		GID:            uint32(gid),
+		MaxParallel:    parallel,
+		SharedTmp:      []string{"/tmp", "/dev/shm"},
 	}
 	if !cfg.DropPrivileges {
 		fmt.Fprintln(os.Stderr, "bordo-sandbox: not running as root, commands will run as this user")
 	}
-	if cfg.DropPrivileges {
-		// The cache volume is created root-owned; commands run as the unprivileged user.
-		_ = os.MkdirAll(cfg.CacheDir, 0o755)
-		_ = os.Chown(cfg.CacheDir, uid, gid)
+	sb := sandbox.New(cfg)
+	if err := sb.Prepare(); err != nil {
+		fmt.Fprintln(os.Stderr, "bordo-sandbox:", err)
+		os.Exit(1)
 	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+	go sb.Janitor(ctx, 5*time.Minute)
+
 	addr := ":" + env("BORDO_SANDBOX_PORT", "7403")
-	srv := &http.Server{Addr: addr, Handler: sandbox.New(cfg).Handler(), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Addr: addr, Handler: sb.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		<-ctx.Done()
+		// Let in-flight runs finish their teardown; requests that outlast this are cut off, which
+		// cancels their commands.
+		shutdown, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdown)
+	}()
 	fmt.Println("bordo-sandbox listening on", addr)
-	if err := srv.ListenAndServe(); err != nil {
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	<-done
 }

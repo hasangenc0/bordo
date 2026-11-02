@@ -97,3 +97,92 @@ func TestRunRejectsUnknownProject(t *testing.T) {
 		}
 	}
 }
+
+func TestRunKillsBackgroundJobsAndReturnsWhenShellExits(t *testing.T) {
+	s, _ := newTestServer(t)
+	marker := filepath.Join(t.TempDir(), "still-running")
+	start := time.Now()
+	// The background job inherits stdout; the run must not wait for it, and it must not outlive the run.
+	res, err := s.Run(context.Background(), "p1", "(sleep 2; touch "+marker+") & nohup sleep 30 >/dev/null 2>&1 & echo started", 10*time.Second)
+	if err != nil {
+		t.Fatalf("run with background jobs failed: %v", err)
+	}
+	if res.ExitCode != 0 || !strings.Contains(res.Output, "started") {
+		t.Fatalf("result = %+v", res)
+	}
+	if took := time.Since(start); took > 1500*time.Millisecond {
+		t.Errorf("run waited %v for background jobs", took)
+	}
+	time.Sleep(2500 * time.Millisecond)
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("background job kept running after the run returned")
+	}
+}
+
+func TestRunsAreLimitedToSlots(t *testing.T) {
+	s, _ := newTestServer(t)
+	s = New(Config{WorkspaceRoot: s.cfg.WorkspaceRoot, WorkRoot: s.cfg.WorkRoot, MaxParallel: 1})
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	go func() { _, _ = s.Run(context.Background(), "p1", "sleep 1", 5*time.Second) }()
+	time.Sleep(100 * time.Millisecond)
+	if _, err := s.Run(ctx, "p1", "true", time.Second); err == nil {
+		t.Fatal("second run must wait for the only slot and give up when its context ends")
+	}
+}
+
+func TestPrepareAndJanitorRemoveStaleCopiesOnly(t *testing.T) {
+	s, _ := newTestServer(t)
+	stale := filepath.Join(s.cfg.WorkRoot, "stale", "nested")
+	if err := os.MkdirAll(stale, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Prepare(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Dir(stale)); !os.IsNotExist(err) {
+		t.Errorf("stale copy survived Prepare: %v", err)
+	}
+	for _, slot := range []string{"slot-0", "slot-1"} {
+		if st, err := os.Stat(filepath.Join(s.cfg.CacheDir, slot)); err != nil || !st.IsDir() {
+			t.Errorf("cache dir %s not created: %v", slot, err)
+		}
+	}
+
+	busy := filepath.Join(s.cfg.WorkRoot, "busy")
+	_ = os.MkdirAll(busy, 0o755)
+	s.active[busy] = true
+	_ = os.MkdirAll(stale, 0o755)
+	s.sweep()
+	if _, err := os.Stat(busy); err != nil {
+		t.Error("sweep removed the copy of a run in progress")
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Error("sweep left a stale copy")
+	}
+}
+
+func TestProcOwnedBy(t *testing.T) {
+	status := func(state, uids string) string {
+		return "Name:\tsleep\nState:\t" + state + " (sleeping)\nTgid:\t42\nUid:\t" + uids + "\nGid:\t10000\t10000\t10000\t10000\n"
+	}
+	cases := []struct {
+		status string
+		want   bool
+	}{
+		{status("S", "10000\t10000\t10000\t10000"), true},
+		{status("R", "0\t10001\t0\t0"), true},              // effective uid
+		{status("S", "0\t0\t10001\t0"), true},              // saved uid
+		{status("Z", "10001\t10001\t10001\t10001"), false}, // already dead
+		{status("S", "10002\t10002\t10002\t10002"), false},
+	}
+	for i, c := range cases {
+		uid := "10000"
+		if i > 0 {
+			uid = "10001"
+		}
+		if got := procOwnedBy(c.status, uid); got != c.want {
+			t.Errorf("case %d: procOwnedBy = %v, want %v", i, got, c.want)
+		}
+	}
+}
