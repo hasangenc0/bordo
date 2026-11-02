@@ -190,6 +190,7 @@ func (c *AnthropicClient) RunAgentLoop(
 
 	var fullText string
 	nudges := 0
+	nudged := false // the last call answered a nudge
 	finished := false
 	for i := 0; i < maxIterations; i++ {
 		resp, err := c.callAPI(ctx, oaiMsgs, oaiTools)
@@ -214,8 +215,13 @@ func (c *AnthropicClient) RunAgentLoop(
 			// models also stop mid-task: cut off by the token limit, or after announcing the next
 			// step ("Let me check...") without taking it. Push on instead of making the user type
 			// "continue".
-			if nudges < maxNudges && stoppedEarly(choice.FinishReason, msg.Content) {
+			// A second tool-less answer to a nudge means the model is waiting on the user (asking,
+			// refusing, offering options), not stalled; nudging again only makes it repeat itself.
+			// A reply cut off by the token limit is the exception: that one is always incomplete.
+			again := !nudged || choice.FinishReason == "length"
+			if again && nudges < maxNudges && stoppedEarly(choice.FinishReason, msg.Content) {
 				nudges++
+				nudged = true
 				oaiMsgs = append(oaiMsgs, msg, oaiMessage{Role: "user", Content: "Continue. If you stopped because you need something from me, say exactly what; otherwise carry out the step you just described with the tools and finish the task."})
 				continue
 			}
@@ -223,6 +229,7 @@ func (c *AnthropicClient) RunAgentLoop(
 			break
 		}
 
+		nudged = false
 		// Append the assistant turn (with tool_calls) before sending tool results.
 		oaiMsgs = append(oaiMsgs, msg)
 
@@ -268,8 +275,22 @@ func emit(onText func(string), full *string, text string) {
 // intentRe matches a closing sentence that promises an action rather than reporting a result.
 var intentRe = regexp.MustCompile(`(?i)(let me|i'll|i will|i'm going to|i am going to|next,? i|now i'll|now let me|first,? let me)\b[^.!?]*[:.…]?\s*$`)
 
+// waitingRe matches a closing sentence whose promise depends on the user: "Tell me the region and
+// I'll probe it", "If you want, I'll...", "Once you confirm, I will...".
+var waitingRe = regexp.MustCompile(`(?i)\b(if you|once you|when you|after you|tell me|give me|send me|hand me|show me|let me know|(pick|choose) (one|whichever|any)|once confirmed|say the word|your call|up to you)\b`)
+
+// lastSentence returns the final sentence of t (t is already trimmed).
+func lastSentence(t string) string {
+	body := strings.TrimRight(t, ".!?…:) \n*_`")
+	if i := strings.LastIndexAny(body, ".!?\n"); i >= 0 {
+		return strings.TrimSpace(t[i+1:])
+	}
+	return t
+}
+
 // stoppedEarly reports whether a tool-less answer looks like an interrupted turn rather than a
-// finished one: the model hit its token limit, or its last words announce an action.
+// finished one: the model hit its token limit, or its last words announce an action it can take
+// now (not one that waits on the user).
 func stoppedEarly(finishReason, content string) bool {
 	if finishReason == "length" {
 		return true
@@ -285,7 +306,10 @@ func stoppedEarly(finishReason, content string) bool {
 	if strings.HasSuffix(t, ":") {
 		return true
 	}
-	return intentRe.MatchString(last) && !strings.HasSuffix(t, "?")
+	if strings.HasSuffix(t, "?") || waitingRe.MatchString(lastSentence(t)) {
+		return false
+	}
+	return intentRe.MatchString(last)
 }
 
 // callAPI calls the model, retrying the failures that are worth a retry: a rate limit, a server

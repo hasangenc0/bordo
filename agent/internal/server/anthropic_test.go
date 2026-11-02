@@ -87,6 +87,18 @@ func TestLoopContinuesAfterAnAnnouncedStep(t *testing.T) {
 	}
 }
 
+func TestStoppedEarlyStillCatchesAnnouncedSteps(t *testing.T) {
+	for _, s := range []string{
+		"The release is out. Let me confirm the deploy succeeded.",
+		"Build queued. Now I'll check the logs:",
+		"I'll choose the smaller instance and deploy it.",
+	} {
+		if !stoppedEarly("stop", s) {
+			t.Errorf("%q must count as an announced step", s)
+		}
+	}
+}
+
 func TestLoopContinuesAfterTheTokenLimit(t *testing.T) {
 	var calls int
 	c := fakeLLM(t, []string{textReply("part one ", "length"), textReply("and the rest.", "stop")}, &calls)
@@ -101,6 +113,10 @@ func TestLoopStopsWhenTheAnswerIsFinal(t *testing.T) {
 		"Done. The app is serving.",
 		"Which region should I deploy to?",
 		"I deployed it; I'll wait for your go-ahead on the next one?",
+		"I can't run that here. Tell me the underlying goal and I'll point you at the right tool or walk you through it.",
+		"Give me the objective, or just a region name, and I'll finish in one turn.",
+		"If you want the logs too, I'll pull them.",
+		"Pick whichever applies and I'll run it immediately.",
 	} {
 		var calls int
 		c := fakeLLM(t, []string{textReply(final, "stop")}, &calls)
@@ -112,12 +128,38 @@ func TestLoopStopsWhenTheAnswerIsFinal(t *testing.T) {
 
 func TestLoopNudgeIsBounded(t *testing.T) {
 	var calls int
-	c := fakeLLM(t, []string{textReply("Let me look.", "stop")}, &calls)
+	// Announce, get nudged, do some tool work, announce again: each stall after real work earns a
+	// nudge, up to maxNudges.
+	announce := textReply("Let me look.", "stop")
+	c := fakeLLM(t, []string{announce, toolReply(), announce, toolReply(), announce, toolReply(), announce, toolReply(), announce}, &calls)
 	if _, err := runLoop(c); err != nil {
 		t.Fatal(err)
 	}
-	if calls != maxNudges+1 {
+	if calls != 2*maxNudges+1 {
 		t.Fatalf("a model that keeps announcing must be nudged %d times then left alone, got %d calls", maxNudges, calls)
+	}
+}
+
+// Regression: a model that refuses or asks for input answered every nudge with the same message,
+// and the user got it four times. A tool-less answer to a nudge ends the turn.
+func TestLoopDoesNotNudgeTwiceInARow(t *testing.T) {
+	var calls int
+	c := fakeLLM(t, []string{textReply("I won't run that. Let me explain why.", "stop")}, &calls)
+	out, err := runLoop(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || strings.Count(out, "I won't run that") != 2 {
+		t.Fatalf("expected one nudge then stop: calls=%d out=%q", calls, out)
+	}
+}
+
+func TestLoopKeepsGoingWhileCutOffByTheTokenLimit(t *testing.T) {
+	var calls int
+	c := fakeLLM(t, []string{textReply("a ", "length"), textReply("b ", "length"), textReply("c.", "stop")}, &calls)
+	out, err := runLoop(c)
+	if err != nil || calls != 3 || out != "a b c." {
+		t.Fatalf("calls=%d out=%q err=%v", calls, out, err)
 	}
 }
 
