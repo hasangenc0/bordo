@@ -104,7 +104,9 @@ func New(cfg Config) *Server {
 func (s *Server) slotUID(slot int) int { return int(s.cfg.UID) + slot }
 
 // Prepare readies the server before it takes requests: it kills processes and deletes scratch
-// copies left behind by a previous instance, and creates each slot's cache directory.
+// copies left behind by a previous instance, and creates each slot's cache directory. Only a work
+// root it cannot create is fatal; cache problems are logged and runs fall back to a cache inside
+// their copy.
 func (s *Server) Prepare() error {
 	if err := os.MkdirAll(s.cfg.WorkRoot, 0o755); err != nil {
 		return err
@@ -113,17 +115,34 @@ func (s *Server) Prepare() error {
 		s.reap(s.slotUID(i), "")
 	}
 	s.sweep()
-	if s.cfg.CacheDir == "" {
-		return nil
+	if s.cfg.CacheDir != "" {
+		if err := s.prepareCache(); err != nil {
+			log.Printf("bordo-sandbox: dependency cache unavailable, runs will not share one: %v", err)
+		}
 	}
+	return nil
+}
+
+func (s *Server) prepareCache() error {
 	if err := os.MkdirAll(s.cfg.CacheDir, 0o755); err != nil {
 		return err
 	}
-	// Caches used to be shared by all runs at the top of CacheDir; they are per slot now.
+	// Caches used to be shared by all runs at the top of CacheDir; they are per slot now. Remove
+	// them as their owner while the old owner still owns CacheDir too.
 	for _, legacy := range []string{"go-build", "go", "npm", "pip"} {
 		dir := filepath.Join(s.cfg.CacheDir, legacy)
 		if _, err := os.Lstat(dir); err == nil {
 			_ = s.removeTree(dir, ownerOf(dir))
+		}
+	}
+	if s.cfg.DropPrivileges {
+		// Older versions handed CacheDir to the unprivileged user. Root has no CAP_DAC_OVERRIDE, so
+		// it must own CacheDir to create the slot directories in it.
+		if err := os.Lchown(s.cfg.CacheDir, 0, 0); err != nil {
+			return err
+		}
+		if err := os.Chmod(s.cfg.CacheDir, 0o755); err != nil {
+			return err
 		}
 	}
 	for i := 0; i < cap(s.slots); i++ {
@@ -263,7 +282,11 @@ func (s *Server) cacheDir(slot int, work string) string {
 	if s.cfg.CacheDir == "" {
 		return filepath.Join(work, ".cache")
 	}
-	return filepath.Join(s.cfg.CacheDir, "slot-"+strconv.Itoa(slot))
+	dir := filepath.Join(s.cfg.CacheDir, "slot-"+strconv.Itoa(slot))
+	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+		return filepath.Join(work, ".cache")
+	}
+	return dir
 }
 
 func (s *Server) execute(ctx context.Context, work, cache string, uid int, command string, timeout time.Duration) (*Result, error) {
