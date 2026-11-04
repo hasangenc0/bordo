@@ -130,3 +130,13 @@ func TestUpgradeLeavesHandManagedComposeFileAlone(t *testing.T) {
 		t.Fatalf("a hand-managed compose file must not be rewritten, got:\n%s", got)
 	}
 }
+
+func TestReplacedImages(t *testing.T) {
+	got := replacedImages([]string{"a", "b", "c", "b"}, []string{"a", "d"})
+	if len(got) != 2 || got[0] != "b" || got[1] != "c" {
+		t.Fatalf("replacedImages = %v, want [b c]", got)
+	}
+	if got := replacedImages(nil, []string{"a"}); len(got) != 0 {
+		t.Fatalf("no previous images means nothing to remove, got %v", got)
+	}
+}

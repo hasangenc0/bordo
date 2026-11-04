@@ -349,6 +349,8 @@ func upgradeStack(dir string, force bool) error {
 
 	syncComposeFile(dir)
 
+	before := composeImageIDs(dir)
+
 	fmt.Println("Pulling latest Bordo images...")
 	if err := composeInDir(dir, "pull").Run(); err != nil {
 		return fmt.Errorf("docker compose pull: %w", err)
@@ -372,8 +374,53 @@ func upgradeStack(dir string, force bool) error {
 	if err := composeInDir(dir, "up", "-d", "--remove-orphans").Run(); err != nil {
 		return fmt.Errorf("docker compose up: %w", err)
 	}
+	removeReplacedImages(before, composeImageIDs(dir))
 	fmt.Println("Upgrade complete.")
 	return nil
+}
+
+// composeImageIDs lists the image IDs the stack's containers run.
+func composeImageIDs(dir string) []string {
+	c := composeInDir(dir, "images", "-q")
+	c.Stdout, c.Stdin = nil, nil
+	out, err := c.Output()
+	if err != nil {
+		return nil
+	}
+	return strings.Fields(string(out))
+}
+
+// removeReplacedImages deletes the images the stack ran before an upgrade and no longer runs. Each
+// release replaces images of a GB or more (the sandbox carries Go, Node, Java and Python), and
+// they would otherwise pile up on the host. Images still used by any container are kept, because
+// 'docker image rm' without --force refuses them.
+func removeReplacedImages(before, after []string) {
+	ids := replacedImages(before, after)
+	if len(ids) == 0 {
+		return
+	}
+	c := exec.Command("docker", append([]string{"image", "rm"}, ids...)...)
+	if out, err := c.CombinedOutput(); err == nil {
+		fmt.Printf("Removed %d previous image(s).\n", len(ids))
+	} else if strings.Contains(string(out), "Deleted") || strings.Contains(string(out), "Untagged") {
+		fmt.Println("Removed previous images that are no longer in use.")
+	}
+}
+
+func replacedImages(before, after []string) []string {
+	keep := map[string]bool{}
+	for _, id := range after {
+		keep[id] = true
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, id := range before {
+		if !keep[id] && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // syncComposeFile brings the compose file up to date with this CLI, because new releases add

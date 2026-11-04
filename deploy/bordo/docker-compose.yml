@@ -1,3 +1,10 @@
+# Docker keeps container logs forever by default; cap them at 3 x 10 MB per container.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   bordod:
     image: ${BORDOD_IMAGE:-ghcr.io/hasangenc0/bordod:latest}
@@ -30,6 +37,7 @@ services:
       retries: 5
       start_period: 10s
     restart: unless-stopped
+    logging: *default-logging
 
   bordo-agent:
     image: ${AGENT_IMAGE:-ghcr.io/hasangenc0/bordo-agent:latest}
@@ -59,6 +67,7 @@ services:
       bordod:
         condition: service_healthy
     restart: unless-stopped
+    logging: *default-logging
 
   # Runs the agent's shell commands (code_exec). It sees a read-only copy of the checkouts, holds no
   # tokens, runs commands as an unprivileged user, and sits on its own network that cannot reach
@@ -94,6 +103,7 @@ services:
     cpus: 1.5
     pids_limit: 512
     restart: unless-stopped
+    logging: *default-logging
 
   bordo-console:
     image: ${CONSOLE_IMAGE:-ghcr.io/hasangenc0/bordo-console:latest}
@@ -110,6 +120,7 @@ services:
     depends_on:
       - bordo-agent
     restart: unless-stopped
+    logging: *default-logging
 
 networks:
   sandbox: {}
