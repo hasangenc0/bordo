@@ -41,7 +41,8 @@ func NewBordoToolRegistry(cp *CPClient) *ToolRegistry {
 	r.Register(logsQueryTool(cp))
 
 	// Code tools (workspace git: checkout, edit, diff, commit, PR)
-	for _, t := range NewCodeTools(cp, "").Tools() {
+	r.Code = NewCodeTools(cp, "")
+	for _, t := range r.Code.Tools() {
 		r.Register(t)
 	}
 

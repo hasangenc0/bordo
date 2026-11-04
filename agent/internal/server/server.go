@@ -112,6 +112,9 @@ func Run(ctx context.Context, cfg Config) error {
 		},
 	}
 
+	// Remove checkouts of deleted projects and clean ones unused for 30 days.
+	go s.tools.Code.Janitor(ctx, 6*time.Hour, 30*24*time.Hour)
+
 	s.router.Use(middleware.RequestID)
 	s.router.Use(middleware.Recoverer)
 

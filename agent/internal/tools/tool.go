@@ -27,6 +27,9 @@ func (t *Tool) Call(ctx context.Context, params map[string]any) (any, error) {
 type ToolRegistry struct {
 	mu    sync.RWMutex
 	tools map[string]*Tool
+	// Code is the code tools' instance, set by NewBordoToolRegistry, so housekeeping shares its
+	// per-project locks.
+	Code *CodeTools
 }
 
 func NewToolRegistry() *ToolRegistry {
