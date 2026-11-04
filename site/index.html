@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Bordo</title>
+<title>Bordo: self-hosted agent that ships your service</title>
 <meta name="description" content="Tell an agent what to build. Bordo scaffolds it, builds the image in GitHub Actions, and deploys it to your own server on k3s.">
 <link rel="canonical" href="https://hasangenc0.github.io/bordo/">
 <link rel="icon" type="image/png" href="favicon.png">
@@ -11,8 +11,12 @@
 <meta property="og:type" content="website">
 <meta property="og:title" content="Bordo: one sentence in, a running service out">
 <meta property="og:description" content="Self-hosted. An agent scaffolds, builds and deploys your service to a server you own.">
-<meta property="og:image" content="https://hasangenc0.github.io/bordo/icon.png">
-<meta name="twitter:card" content="summary">
+<meta property="og:image" content="https://hasangenc0.github.io/bordo/social.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:url" content="https://hasangenc0.github.io/bordo/">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://hasangenc0.github.io/bordo/social.png">
 <style>
 :root{--bg:#fbfaf8;--fg:#1c1b1a;--muted:#6a6560;--line:#e4e0da;--accent:#8c1f3d;--code-bg:#1c1b1a;--code-fg:#f1ede6;--ok:#6fcf97;--bad:#b3261e}
 @media (prefers-color-scheme:dark){:root{--bg:#141312;--fg:#eeeae4;--muted:#9a948c;--line:#2c2a27;--accent:#e0566b;--code-bg:#0c0b0a;--code-fg:#f1ede6;--bad:#e0766b}}
@@ -66,6 +70,22 @@ summary{cursor:pointer;font-weight:600;font-size:16px}
 details p,details .copy{margin-top:12px}
 footer{margin-top:72px;padding-top:20px;border-top:1px solid var(--line);color:var(--muted);font-size:14px}
 footer a{color:inherit}
+.star{display:inline-flex;align-items:center;gap:6px}
+.star b{font-weight:600;color:var(--muted);border-left:1px solid var(--line);padding-left:8px;margin-left:2px}
+.star b:empty{display:none}
+.flow{width:100%;height:auto;margin:0 0 8px}
+.flow text{fill:var(--fg);font:600 13px system-ui,sans-serif}
+.flow .s{fill:var(--muted);font-weight:400;font-size:12px}
+.flow rect{fill:none;stroke:var(--line);stroke-width:1.5}
+.flow .hl{stroke:var(--accent)}
+.flow path{fill:none;stroke:var(--muted);stroke-width:1.5}
+.flow .ah{fill:var(--muted);stroke:none}
+.need{margin:0 0 20px;padding-left:20px;color:var(--muted);font-size:16px}
+.need li{margin:2px 0}
+.need a{color:var(--accent)}
+.faq h3{margin:0 0 4px;font-size:17px}
+.faq p{margin:0 0 20px;color:var(--muted);font-size:16px}
+.ask{margin-top:24px;padding:16px 18px;border:1px solid var(--line);border-radius:10px;font-size:16px}
 @media (max-width:640px){.grid,.vs{grid-template-columns:1fr}nav{gap:14px}}
 </style>
 </head>
@@ -73,7 +93,7 @@ footer a{color:inherit}
 <main>
 <header>
   <div class="logo"><img src="icon.png" alt="" width="32" height="32">Bordo</div>
-  <nav><a href="#install">Install</a><a href="#templates">Templates</a><a href="https://github.com/hasangenc0/bordo">GitHub</a></nav>
+  <nav><a href="#install">Install</a><a href="#templates">Templates</a><a href="#faq">FAQ</a><a href="https://github.com/hasangenc0/bordo">GitHub</a></nav>
 </header>
 
 <h1>One sentence in. A running service out.</h1>
@@ -87,7 +107,7 @@ footer a{color:inherit}
 
 <div class="cta">
   <a class="btn primary" href="#install">Install in 5 minutes</a>
-  <a class="btn" href="https://github.com/hasangenc0/bordo">Source on GitHub</a>
+  <a class="btn star" href="https://github.com/hasangenc0/bordo">★ Star on GitHub<b data-stars></b></a>
 </div>
 <p class="needs">You need: a Linux server with Docker, a GitHub account, and a DeepSeek API key.</p>
 
@@ -123,7 +143,30 @@ footer a{color:inherit}
   <div><h3>Console and CLI</h3><p>Chat, apps, regions, metrics and logs in the web console, or the same from <code>bordo</code> in a terminal.</p></div>
 </div>
 
+<h2>How it works</h2>
+<svg class="flow" viewBox="0 0 720 210" role="img" aria-label="You talk to Bordo on your server. Bordo pushes code to GitHub, GitHub Actions builds the image into GHCR, and k3s on your server pulls and runs it.">
+  <rect class="hl" x="8" y="20" width="330" height="170" rx="12"/>
+  <text x="22" y="44">Your server</text>
+  <rect x="24" y="60" width="140" height="48" rx="8"/><text x="36" y="82">Console + CLI</text><text class="s" x="36" y="98">you talk here</text>
+  <rect x="182" y="60" width="140" height="48" rx="8"/><text x="194" y="82">Agent + bordod</text><text class="s" x="194" y="98">plans and drives</text>
+  <rect x="24" y="126" width="298" height="48" rx="8"/><text x="36" y="148">k3s</text><text class="s" x="36" y="164">pulls the image and runs your service</text>
+  <rect x="440" y="20" width="272" height="72" rx="12"/>
+  <text x="456" y="44">GitHub</text><text class="s" x="456" y="64">Actions builds the image,</text><text class="s" x="456" y="80">pushes it to GHCR</text>
+  <rect x="440" y="118" width="272" height="72" rx="12"/>
+  <text x="456" y="142">You get a URL</text><text class="s" x="456" y="162">http://your-server:3xxxx</text>
+  <path d="M322 84 H430"/><path class="ah" d="M430 80 l10 4 l-10 4z"/>
+  <path d="M170 174 V200 H560 V192"/><path class="ah" d="M556 192 l4 -10 l4 10z" transform="translate(0 0)"/>
+</svg>
+<p class="needs">Bordo never builds on your server. Your code and images live in your own GitHub account.</p>
+
 <h2 id="install">Install</h2>
+<p>Before you start, have:</p>
+<ul class="need">
+  <li>A Linux server with Docker. A $5 VPS works.</li>
+  <li>A GitHub account. Bordo asks you to authorize it during setup.</li>
+  <li>A <a href="https://platform.deepseek.com/api_keys">DeepSeek API key</a>.</li>
+  <li>Ports 3000 (console) and 7401/7402 (API) reachable from you. Use a firewall rule or an SSH tunnel.</li>
+</ul>
 <ol class="steps">
   <li>
     <h3>Install the CLI on your server</h3>
@@ -142,7 +185,9 @@ footer a{color:inherit}
   </li>
 </ol>
 
-<details>
+<div class="ask">Got a live URL? A <a href="https://github.com/hasangenc0/bordo">star on GitHub</a> is how other people find this. Something broke? <a href="https://github.com/hasangenc0/bordo/issues">Open an issue</a>, setup problems are the ones I want to fix first.</div>
+
+<details style="margin-top:24px">
   <summary>Prefer a browser for setup?</summary>
   <p>Run <code>bordo platform install</code> and <code>bordo platform up</code>, then open the console at <code>http://your-server:3000</code>. It asks for the DeepSeek key, then walks you through connecting GitHub. Login: <code>bordo platform password</code>.</p>
 </details>
@@ -158,6 +203,10 @@ bordo build trigger hello-api
 bordo deploy create &lt;project-id&gt; &lt;image&gt; --region &lt;region&gt; --expose nodeport</pre><button type="button">Copy</button></div>
 </details>
 <details>
+  <summary>What does setup change on my machine?</summary>
+  <p>The installer puts one <code>bordo</code> binary in <code>/usr/local/bin</code> (or <code>~/.local/bin</code>). Setup writes a compose file to <code>~/.bordo/deploy</code> and starts the Bordo containers. Stop them with <code>bordo platform down</code>. To remove everything, run that, then delete <code>~/.bordo</code> and the binary. You can <a href="https://github.com/hasangenc0/bordo/blob/master/install-cli.sh">read the install script</a> first.</p>
+</details>
+<details>
   <summary>HTTPS on your own domain</summary>
   <p>Deploy with <code>--expose ingress --host app.yourdomain.com</code> and point your domain at the server.</p>
 </details>
@@ -169,6 +218,20 @@ bordo deploy create &lt;project-id&gt; &lt;image&gt; --region &lt;region&gt; --e
   <tr><td>Java</td><td><code>java-web-service</code> <code>java-worker</code> <code>java-job</code> <code>java-kafka</code> <code>java-data-layer</code></td></tr>
   <tr><td>TypeScript</td><td><code>ts-react-app</code> <code>node-bff</code></td></tr>
 </table>
+
+<h2 id="faq">FAQ</h2>
+<div class="faq">
+  <h3>Where does my DeepSeek key go?</h3>
+  <p>Into the settings store of the control plane running on your server. It is sent to DeepSeek when the agent calls the model, and nowhere else.</p>
+  <h3>Can I use a different model?</h3>
+  <p>Setup lets you change the model and the LLM base URL with <code>bordo setup --advanced</code>. Anything that speaks the same API works.</p>
+  <h3>How is this different from Coolify or Dokploy?</h3>
+  <p>Those deploy code you already wrote. Bordo also scaffolds the project from a template, writes the Dockerfile and CI workflow, and lets an agent run the whole loop from one sentence.</p>
+  <h3>Does it cost anything?</h3>
+  <p>Bordo is free and Apache 2.0. You pay for your server and for DeepSeek API usage. GitHub Actions minutes are on your own account.</p>
+  <h3>Is it production ready?</h3>
+  <p>It is early. The deploy path works end to end and is tested live, but expect rough edges. Good for side projects and internal tools today.</p>
+</div>
 
 <h2>Status</h2>
 <p>Working end to end today: install, connect GitHub, create a project, build, deploy to Kubernetes, serve on a public URL. The hardened pull-based deploy model is implemented and tested live. Development is active.</p>
@@ -185,6 +248,14 @@ document.querySelectorAll('.copy button').forEach(function (b) {
     if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, function () {});
   });
 });
+
+(function () {
+  var el = document.querySelector('[data-stars]');
+  if (!el || !window.fetch) return;
+  fetch('https://api.github.com/repos/hasangenc0/bordo').then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (d) { if (d && typeof d.stargazers_count === 'number') el.textContent = d.stargazers_count; })
+    .catch(function () {});
+})();
 </script>
 </body>
 </html>
