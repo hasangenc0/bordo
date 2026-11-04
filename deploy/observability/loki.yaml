@@ -44,6 +44,18 @@ data:
     ruler:
       alertmanager_url: http://localhost:9093
 
+    # Keep 30 days of logs, matching VictoriaMetrics and Tempo. Without this Loki never deletes
+    # chunks and the node's disk fills up.
+    limits_config:
+      retention_period: 720h
+
+    compactor:
+      working_directory: /data/loki/compactor
+      compaction_interval: 10m
+      retention_enabled: true
+      retention_delete_delay: 2h
+      delete_request_store: filesystem
+
 ---
 apiVersion: apps/v1
 kind: StatefulSet
