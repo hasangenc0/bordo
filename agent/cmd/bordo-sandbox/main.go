@@ -17,6 +17,10 @@ import (
 )
 
 func main() {
+	// Teardown re-runs this binary as a slot user to delete that user's IPC objects.
+	if len(os.Args) > 1 && os.Args[1] == sandbox.IPCRMCommand {
+		os.Exit(sandbox.RunIPCRM(os.Args[2:]))
+	}
 	env := func(k, d string) string {
 		if v := os.Getenv(k); v != "" {
 			return v
@@ -35,7 +39,7 @@ func main() {
 		UID:            uint32(uid),
 		GID:            uint32(gid),
 		MaxParallel:    parallel,
-		SharedTmp:      []string{"/tmp", "/dev/shm"},
+		SharedTmp:      []string{"/tmp", "/dev/shm", "/dev/mqueue"},
 	}
 	if !cfg.DropPrivileges {
 		fmt.Fprintln(os.Stderr, "bordo-sandbox: not running as root, commands will run as this user")

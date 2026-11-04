@@ -10,7 +10,7 @@
 // Teardown follows what multi-tenant runners such as Piston and isolate do. Each concurrent run gets
 // its own slot with a dedicated UID, so when the command's shell exits everything still running as
 // that UID (background jobs, nohup'd or setsid'd daemons, build-tool daemons) is stopped and killed,
-// and files it left in the shared tmpfs mounts are removed. The scratch copy is deleted as that UID,
+// and files and System V IPC objects it left behind are removed. The scratch copy is deleted as that UID,
 // because the server runs as root without CAP_DAC_OVERRIDE and cannot delete files owned by another
 // user. Leftover copies from a previous process are swept on startup.
 package sandbox
@@ -352,11 +352,13 @@ func (s *Server) execute(ctx context.Context, work, cache string, uid int, comma
 	return res, nil
 }
 
-// reap kills every process of uid, removes uid's files from the shared tmpfs mounts and deletes
-// work (if set). Without privileges (tests) there is no dedicated user, so it only deletes work.
+// reap kills every process of uid, removes its System V IPC objects and its files in the shared
+// tmpfs mounts, and deletes work (if set). Without privileges (tests) there is no dedicated user, so
+// it only deletes work.
 func (s *Server) reap(uid int, work string) {
 	if s.cfg.DropPrivileges {
 		s.killUser(uid)
+		s.removeIPCOf(uid)
 		for _, dir := range s.cfg.SharedTmp {
 			entries, _ := os.ReadDir(dir)
 			for _, e := range entries {
@@ -371,6 +373,28 @@ func (s *Server) reap(uid int, work string) {
 		if err := s.removeTree(work, uid); err != nil {
 			log.Printf("bordo-sandbox: removing %s: %v", work, err)
 		}
+	}
+}
+
+// removeIPCOf deletes uid's System V IPC objects, as uid, by re-running this binary.
+func (s *Server) removeIPCOf(uid int) {
+	objs := sysvIPCOwnedBy("/proc/sysvipc", uid)
+	if len(objs) == 0 {
+		return
+	}
+	self, err := os.Executable()
+	if err != nil {
+		log.Printf("bordo-sandbox: removing IPC objects of uid %d: %v", uid, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, self, append([]string{IPCRMCommand}, objs...)...)
+	cmd.Env = []string{}
+	cmd.Dir = "/"
+	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(uid), Gid: s.cfg.GID, Groups: []uint32{}}}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		log.Printf("bordo-sandbox: removing IPC objects of uid %d: %v %s", uid, err, out)
 	}
 }
 
