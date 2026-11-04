@@ -29,6 +29,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -58,6 +59,9 @@ type Config struct {
 	DropPrivileges bool
 	UID, GID       uint32
 	MaxParallel    int
+	// CacheMaxBytes caps each slot's dependency cache on disk; above it the janitor deletes the
+	// largest tool caches until it fits. 0 means no cap.
+	CacheMaxBytes int64
 	// SharedTmp lists world-writable directories outside the scratch copy (tmpfs mounts) where
 	// commands may leave files; teardown removes the slot user's files from them.
 	SharedTmp []string
@@ -83,6 +87,8 @@ type Result struct {
 type Server struct {
 	cfg   Config
 	slots chan int // free slot indexes; a slot is a UID and a cache directory
+	// busy[i] is held by the run using slot i, and by the janitor while it trims that slot's cache.
+	busy []sync.Mutex
 
 	mu     sync.Mutex
 	active map[string]bool // scratch directories of runs in progress
@@ -94,7 +100,7 @@ func New(cfg Config) *Server {
 	if n <= 0 {
 		n = 2
 	}
-	s := &Server{cfg: cfg, slots: make(chan int, n), active: map[string]bool{}}
+	s := &Server{cfg: cfg, slots: make(chan int, n), busy: make([]sync.Mutex, n), active: map[string]bool{}}
 	for i := 0; i < n; i++ {
 		s.slots <- i
 	}
@@ -159,19 +165,98 @@ func (s *Server) prepareCache() error {
 	return nil
 }
 
-// Janitor deletes scratch copies that no run owns, every interval, until ctx is done. Runs clean up
-// after themselves; this catches what a crash in the middle of one would leave.
-func (s *Server) Janitor(ctx context.Context, interval time.Duration) {
+// Janitor deletes scratch copies that no run owns every interval, and trims the dependency caches
+// every cacheEvery, until ctx is done. Runs clean up after themselves; the sweep catches what a
+// crash in the middle of one would leave.
+func (s *Server) Janitor(ctx context.Context, interval, cacheEvery time.Duration) {
+	s.TrimCaches()
 	t := time.NewTicker(interval)
 	defer t.Stop()
+	lastTrim := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
 			s.sweep()
+			if time.Since(lastTrim) >= cacheEvery {
+				s.TrimCaches()
+				lastTrim = time.Now()
+			}
 		}
 	}
+}
+
+// TrimCaches brings every idle slot's cache under CacheMaxBytes by deleting whole tool caches
+// (go-build, npm, m2, ...), largest first. They are rebuilt on demand, so the cost of trimming is
+// a slower next build. A slot in use is skipped until the next pass.
+func (s *Server) TrimCaches() {
+	if s.cfg.CacheDir == "" || s.cfg.CacheMaxBytes <= 0 {
+		return
+	}
+	for i := range s.busy {
+		if !s.busy[i].TryLock() {
+			continue
+		}
+		s.trimCache(i)
+		s.busy[i].Unlock()
+	}
+}
+
+func (s *Server) trimCache(slot int) {
+	dir := filepath.Join(s.cfg.CacheDir, "slot-"+strconv.Itoa(slot))
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	type sized struct {
+		path string
+		size int64
+	}
+	var parts []sized
+	var total int64
+	for _, e := range entries {
+		p := filepath.Join(dir, e.Name())
+		n := diskUsage(p)
+		parts = append(parts, sized{p, n})
+		total += n
+	}
+	if total <= s.cfg.CacheMaxBytes {
+		return
+	}
+	sort.Slice(parts, func(a, b int) bool { return parts[a].size > parts[b].size })
+	for _, p := range parts {
+		if total <= s.cfg.CacheMaxBytes {
+			break
+		}
+		if err := s.removeTree(p.path, s.slotUID(slot)); err != nil {
+			log.Printf("bordo-sandbox: trimming cache %s: %v", p.path, err)
+			continue
+		}
+		log.Printf("bordo-sandbox: cache over %d MB, removed %s (%d MB)", s.cfg.CacheMaxBytes>>20, p.path, p.size>>20)
+		total -= p.size
+	}
+}
+
+// diskUsage is the space path takes on disk (allocated blocks, like du), not its apparent size.
+func diskUsage(path string) int64 {
+	var total int64
+	_ = filepath.WalkDir(path, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		if st, ok := info.Sys().(*syscall.Stat_t); ok {
+			total += int64(st.Blocks) * 512
+		} else {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
 }
 
 func (s *Server) sweep() {
@@ -254,8 +339,10 @@ func (s *Server) Run(ctx context.Context, project, command string, timeout time.
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+	s.busy[slot].Lock() // waits only if the janitor is trimming this slot's cache
 	uid := s.slotUID(slot)
 	if err := os.MkdirAll(s.cfg.WorkRoot, 0o755); err != nil {
+		s.busy[slot].Unlock()
 		s.slots <- slot
 		return nil, err
 	}
@@ -270,6 +357,7 @@ func (s *Server) Run(ctx context.Context, project, command string, timeout time.
 		s.mu.Lock()
 		delete(s.active, work)
 		s.mu.Unlock()
+		s.busy[slot].Unlock()
 		s.slots <- slot
 	}()
 	if err := copyTree(src, work, s.cfg.DropPrivileges, uid, int(s.cfg.GID)); err != nil {
@@ -521,7 +609,15 @@ func env(home, cache string) []string {
 		"GOPATH=" + filepath.Join(cache, "go"),
 		"GOFLAGS=-buildvcs=false",
 		"npm_config_cache=" + filepath.Join(cache, "npm"),
+		"YARN_CACHE_FOLDER=" + filepath.Join(cache, "yarn"),
 		"PIP_CACHE_DIR=" + filepath.Join(cache, "pip"),
+		// HOME is the throwaway copy, so without these Maven and Gradle download every dependency
+		// again on every run, into the memory-backed /work.
+		"MAVEN_OPTS=-Dmaven.repo.local=" + filepath.Join(cache, "m2"),
+		"GRADLE_USER_HOME=" + filepath.Join(cache, "gradle"),
+		// A Gradle daemon would only be killed at teardown; don't start one.
+		"GRADLE_OPTS=-Dorg.gradle.daemon=false",
+		"XDG_CACHE_HOME=" + filepath.Join(cache, "xdg"),
 	}
 }
 

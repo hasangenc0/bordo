@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -183,6 +184,54 @@ func TestProcOwnedBy(t *testing.T) {
 		}
 		if got := procOwnedBy(c.status, uid); got != c.want {
 			t.Errorf("case %d: procOwnedBy = %v, want %v", i, got, c.want)
+		}
+	}
+}
+
+func TestTrimCachesRemovesLargestToolCachesOfIdleSlots(t *testing.T) {
+	s, _ := newTestServer(t)
+	s.cfg.CacheMaxBytes = 600 << 10
+	if err := s.Prepare(); err != nil {
+		t.Fatal(err)
+	}
+	write := func(slot, tool string, kb int) {
+		dir := filepath.Join(s.cfg.CacheDir, slot, tool)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "blob"), bytes.Repeat([]byte("x"), kb<<10), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, slot := range []string{"slot-0", "slot-1"} {
+		write(slot, "go-build", 800)
+		write(slot, "npm", 300)
+		write(slot, "pip", 100)
+	}
+	s.busy[1].Lock() // slot 1 is running a command
+	s.TrimCaches()
+	s.busy[1].Unlock()
+
+	exists := func(slot, tool string) bool {
+		_, err := os.Stat(filepath.Join(s.cfg.CacheDir, slot, tool))
+		return err == nil
+	}
+	if exists("slot-0", "go-build") {
+		t.Error("the largest cache of an over-budget slot must be removed")
+	}
+	if !exists("slot-0", "npm") || !exists("slot-0", "pip") {
+		t.Error("trimming must stop once the slot fits the budget")
+	}
+	if !exists("slot-1", "go-build") {
+		t.Error("a slot in use must not be trimmed")
+	}
+}
+
+func TestEnvKeepsBuildToolCachesOutOfTheCopy(t *testing.T) {
+	e := strings.Join(env("/work/x", "/cache/slot-0"), "\n")
+	for _, want := range []string{"GOCACHE=/cache/slot-0/", "npm_config_cache=/cache/slot-0/", "maven.repo.local=/cache/slot-0/", "GRADLE_USER_HOME=/cache/slot-0/", "YARN_CACHE_FOLDER=/cache/slot-0/"} {
+		if !strings.Contains(e, want) {
+			t.Errorf("env lacks %s", want)
 		}
 	}
 }

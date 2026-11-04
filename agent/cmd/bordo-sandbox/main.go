@@ -31,6 +31,7 @@ func main() {
 	uid, _ := strconv.Atoi(env("BORDO_SANDBOX_UID", "10000"))
 	gid, _ := strconv.Atoi(env("BORDO_SANDBOX_GID", "10000"))
 	parallel, _ := strconv.Atoi(env("BORDO_SANDBOX_PARALLEL", "2"))
+	cacheMB, _ := strconv.Atoi(env("BORDO_SANDBOX_CACHE_MAX_MB", "3072"))
 	cfg := sandbox.Config{
 		WorkspaceRoot:  env("BORDO_WORKSPACE", "/data/workspaces"),
 		WorkRoot:       env("BORDO_SANDBOX_WORK", "/work"),
@@ -39,6 +40,7 @@ func main() {
 		UID:            uint32(uid),
 		GID:            uint32(gid),
 		MaxParallel:    parallel,
+		CacheMaxBytes:  int64(cacheMB) << 20,
 		SharedTmp:      []string{"/tmp", "/dev/shm", "/dev/mqueue"},
 	}
 	if !cfg.DropPrivileges {
@@ -51,7 +53,7 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	go sb.Janitor(ctx, 5*time.Minute)
+	go sb.Janitor(ctx, 5*time.Minute, time.Hour)
 
 	addr := ":" + env("BORDO_SANDBOX_PORT", "7403")
 	srv := &http.Server{Addr: addr, Handler: sb.Handler(), ReadHeaderTimeout: 10 * time.Second}
