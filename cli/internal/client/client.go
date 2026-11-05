@@ -307,6 +307,39 @@ type Region struct {
 	Status string `json:"status"`
 }
 
+// DiskUsage is a machine's disk usage as the control plane reports it.
+type DiskUsage struct {
+	TotalBytes  int64   `json:"total_bytes"`
+	FreeBytes   int64   `json:"free_bytes"`
+	UsedPercent float64 `json:"used_percent"`
+	Level       string  `json:"level"` // ok, warn or critical
+	ReportedAt  string  `json:"reported_at"`
+}
+
+// FleetRegion is a region as listed by the fleet overview, with its live status and last-reported
+// disk usage. Disk is nil until the region's reconciler has reported one.
+type FleetRegion struct {
+	Name   string     `json:"name"`
+	Status string     `json:"status"`
+	Disk   *DiskUsage `json:"disk"`
+	Hint   string     `json:"hint"`
+}
+
+// Fleet is the fleet overview: every region plus the disk of the machine Bordo itself runs on.
+type Fleet struct {
+	Regions      []FleetRegion `json:"regions"`
+	PlatformDisk *DiskUsage    `json:"platform_disk"`
+}
+
+// Fleet returns the fleet overview.
+func (c *Client) Fleet(ctx context.Context) (*Fleet, error) {
+	var out Fleet
+	if err := c.get(ctx, "/v1/fleet", &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // JoinToken is a one-time node-join credential (ADR-0006 Phase 1).
 type JoinToken struct {
 	ID        string `json:"id"`

@@ -2,6 +2,10 @@ package cmd
 
 import (
 	"fmt"
+	"io"
+	"os"
+	"strings"
+	"text/tabwriter"
 
 	"github.com/hasangenc0/bordo/cli/internal/client"
 	"github.com/hasangenc0/bordo/cli/internal/config"
@@ -14,7 +18,7 @@ func RegionCmd() *cobra.Command {
 		Use:   "region",
 		Short: "Manage fleet regions (k3s clusters)",
 	}
-	cmd.AddCommand(regionAddCmd(), regionTokenCmd(), regionSetHostCmd(), regionUpgradeCmd())
+	cmd.AddCommand(regionAddCmd(), regionListCmd(), regionTokenCmd(), regionSetHostCmd(), regionUpgradeCmd())
 	return cmd
 }
 
@@ -40,6 +44,66 @@ func regionAddCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func regionListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "list",
+		Aliases: []string{"ls", "status"},
+		Short:   "List regions with their status and disk usage",
+		Long: "Shows each region's live status and how full its machine's disk is, as last reported by its\n" +
+			"reconciler. A full disk is the usual reason a region turns unreachable.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client.NewFromConfig()
+			if err != nil {
+				return err
+			}
+			f, err := c.Fleet(cmd.Context())
+			if err != nil {
+				return err
+			}
+			printFleet(os.Stdout, f)
+			return nil
+		},
+	}
+}
+
+// printFleet renders the region table plus the platform machine's disk. A region that is
+// unreachable or has a filling disk gets its explanation under the row.
+func printFleet(w io.Writer, f *client.Fleet) {
+	if len(f.Regions) == 0 {
+		fmt.Fprintln(w, "No regions yet. Add one with: bordo region add <name>")
+	} else {
+		tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(tw, "REGION\tSTATUS\tDISK")
+		for _, r := range f.Regions {
+			fmt.Fprintf(tw, "%s\t%s\t%s\n", r.Name, r.Status, describeDisk(r.Disk))
+		}
+		tw.Flush()
+		for _, r := range f.Regions {
+			switch {
+			case r.Hint != "":
+				fmt.Fprintf(w, "\n%s: %s\n", r.Name, r.Hint)
+			case r.Disk != nil && r.Disk.Level != "ok":
+				fmt.Fprintf(w, "\n%s: the machine's disk is %s. Free space (docker system df -v shows what uses it) before kubelet starts evicting pods.\n", r.Name, r.Disk.Level)
+			}
+		}
+	}
+	if f.PlatformDisk != nil {
+		fmt.Fprintf(w, "\nBordo server disk: %s\n", describeDisk(f.PlatformDisk))
+	}
+}
+
+func describeDisk(d *client.DiskUsage) string {
+	if d == nil {
+		return "unknown (reconciler has not reported; try: bordo region upgrade <name>)"
+	}
+	s := fmt.Sprintf("%.0f%% used, %s free", d.UsedPercent, humanBytes(uint64(d.FreeBytes)))
+	if d.Level != "ok" {
+		s += " [" + strings.ToUpper(d.Level) + "]"
+	}
+	return s
 }
 
 func regionTokenCmd() *cobra.Command {
@@ -108,12 +172,19 @@ func regionUpgradeCmd() *cobra.Command {
 			default:
 				fmt.Printf("%q's reconciler is already current (revision %d). Use --force to restart it anyway.\n", args[0], res.Reconciler.Revision)
 			}
+			fmt.Printf("\nRegions joined before the reconciler was hardened keep their old Deployment. To make it survive a\n"+
+				"full disk (critical priority, tolerates the pressure taints, has resource requests), run once on the machine:\n  %s\n", hardenReconcilerCmd)
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "restart even if the reconciler is current")
 	return cmd
 }
+
+// hardenReconcilerCmd patches an existing reconciler Deployment to match what new regions get (see
+// renderReconcilerManifests in fleet/internal/node). The patch also restarts the pod, onto the
+// latest image.
+const hardenReconcilerCmd = `kubectl -n bordo-system patch deployment bordo-reconciler -p '{"spec":{"template":{"spec":{"priorityClassName":"system-cluster-critical","tolerations":[{"key":"node.kubernetes.io/disk-pressure","operator":"Exists","effect":"NoSchedule"},{"key":"node.kubernetes.io/memory-pressure","operator":"Exists","effect":"NoSchedule"},{"key":"node.kubernetes.io/pid-pressure","operator":"Exists","effect":"NoSchedule"}],"containers":[{"name":"reconciler","resources":{"requests":{"cpu":"20m","memory":"64Mi","ephemeral-storage":"32Mi"},"limits":{"memory":"256Mi"}}}]}}}}'`
 
 // printJoinInstructions shows the one-time token and the command to run on the
 // target VM. The token is single-use and short-lived (ADR-0006 Phase 1): the

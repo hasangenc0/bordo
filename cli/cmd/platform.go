@@ -172,6 +172,7 @@ func runPlatformUp(force, quiet bool) error {
 				"To start anyway, re-run with --force.", desc)
 		}
 	}
+	preflightDisk(os.Stdout)
 	// Installs from before the console login existed have no password yet.
 	pw, created, err := ensureConsolePassword(filepath.Join(platformDir(), ".env"))
 	if err != nil {
@@ -234,7 +235,13 @@ func platformStatusCmd() *cobra.Command {
 			if err := ensureInstalled(); err != nil {
 				return err
 			}
-			return compose("ps").Run()
+			if err := compose("ps").Run(); err != nil {
+				return err
+			}
+			if d, ok := hostDisk(); ok {
+				reportDisk(os.Stdout, d)
+			}
+			return nil
 		},
 	}
 }
@@ -348,6 +355,7 @@ func upgradeStack(dir string, force bool) error {
 	}
 
 	syncComposeFile(dir)
+	preflightDisk(os.Stdout)
 
 	before := composeImageIDs(dir)
 
@@ -375,6 +383,7 @@ func upgradeStack(dir string, force bool) error {
 		return fmt.Errorf("docker compose up: %w", err)
 	}
 	removeReplacedImages(before, composeImageIDs(dir))
+	pruneBuildCache()
 	fmt.Println("Upgrade complete.")
 	return nil
 }
