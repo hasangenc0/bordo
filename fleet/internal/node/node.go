@@ -56,7 +56,14 @@ const DefaultAppsNamespace = "bordo-apps"
 // DefaultK3sExec trims k3s to the essentials: no Traefik ingress, no ServiceLB,
 // no metrics-server. These components add hundreds of MB and aren't needed for
 // Bordo's deploy flow, which matters on small/shared VMs (ADR-0006 Phase 3).
-const DefaultK3sExec = "--disable traefik --disable servicelb --disable metrics-server"
+//
+// It also makes kubelet reclaim disk before it is short of it: unused images are garbage
+// collected once the disk passes 70% (the default is 85%, close to the point where kubelet starts
+// evicting pods) and container logs are rotated. A full disk taints the node disk-pressure, which
+// stops the reconciler and with it the whole region. These apply to a node at install time.
+const DefaultK3sExec = "--disable traefik --disable servicelb --disable metrics-server" +
+	" --kubelet-arg=image-gc-high-threshold=70 --kubelet-arg=image-gc-low-threshold=55" +
+	" --kubelet-arg=container-log-max-size=10Mi --kubelet-arg=container-log-max-files=3"
 
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
@@ -312,11 +319,33 @@ spec:
         app: bordo-reconciler
     spec:
       serviceAccountName: bordo-reconciler
+      # The reconciler is how a region is managed at all, so it must outlive the workloads it
+      # starts. Without a priority class and requests it is BestEffort: the first pod kubelet
+      # evicts, and one that cannot be scheduled again while the node is tainted disk-pressure,
+      # which is when it is needed most. The tolerations let it be (re)created under pressure.
+      priorityClassName: system-cluster-critical
+      tolerations:
+        - key: node.kubernetes.io/disk-pressure
+          operator: Exists
+          effect: NoSchedule
+        - key: node.kubernetes.io/memory-pressure
+          operator: Exists
+          effect: NoSchedule
+        - key: node.kubernetes.io/pid-pressure
+          operator: Exists
+          effect: NoSchedule
       containers:
         - name: reconciler
           image: {{.Image}}
           # A restart (bordo region upgrade) must fetch the current image, not reuse a cached one.
           imagePullPolicy: Always
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+              ephemeral-storage: 32Mi
+            limits:
+              memory: 256Mi
           env:
             - name: BORDO_CP_URL
               value: "{{.CPURL}}"

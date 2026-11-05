@@ -142,6 +142,11 @@ func TestRenderReconcilerManifests(t *testing.T) {
 		"cluster-token: CT-SECRET",
 		"image: ghcr.io/x/bordo-reconciler:latest",
 		`value: "https://cp:7401"`,
+		// Survives disk pressure: critical priority, tolerates the pressure taints, has requests
+		// (so it is not BestEffort, the first class kubelet evicts).
+		"priorityClassName: system-cluster-critical",
+		"key: node.kubernetes.io/disk-pressure",
+		"ephemeral-storage: 32Mi",
 	} {
 		if !contains(m, want) {
 			t.Errorf("rendered manifests missing %q", want)
@@ -241,5 +246,13 @@ func TestRunSkipK3s(t *testing.T) {
 	}
 	if registerCalled {
 		t.Fatal("register should not be called in skip mode")
+	}
+}
+
+func TestDefaultK3sExecReclaimsDiskEarly(t *testing.T) {
+	for _, want := range []string{"image-gc-high-threshold=70", "container-log-max-size=10Mi"} {
+		if !contains(DefaultK3sExec, want) {
+			t.Errorf("DefaultK3sExec missing %q", want)
+		}
 	}
 }

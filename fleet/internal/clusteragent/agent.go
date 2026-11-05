@@ -33,10 +33,19 @@ const (
 // something the control plane depends on.
 //
 //	1  reports its revision; restarts itself when the control plane asks
-const Revision = 1
+//	2  reports its machine's disk usage on every pull
+const Revision = 2
 
 // revisionHeader carries Revision on the desired-state pull.
 const revisionHeader = "X-Bordo-Reconciler-Revision"
+
+// Disk usage headers sent on every pull: total and available bytes of the filesystem the machine
+// keeps its containers on. Inside the pod the root filesystem is an overlay of the host's, so
+// statting it needs no node permissions.
+const (
+	diskTotalHeader = "X-Bordo-Disk-Total"
+	diskFreeHeader  = "X-Bordo-Disk-Free"
+)
 
 // Config is the reconciler's runtime configuration (from env, set by its
 // Deployment manifest).
@@ -203,6 +212,10 @@ func (a *Agent) pullDesiredState(ctx context.Context) (desiredState, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+a.cfg.ClusterToken)
 	req.Header.Set(revisionHeader, strconv.Itoa(Revision))
+	if total, free, ok := diskUsage("/"); ok {
+		req.Header.Set(diskTotalHeader, strconv.FormatUint(total, 10))
+		req.Header.Set(diskFreeHeader, strconv.FormatUint(free, 10))
+	}
 	resp, err := a.httpc.Do(req)
 	if err != nil {
 		return out, err
