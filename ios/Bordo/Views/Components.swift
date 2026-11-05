@@ -8,7 +8,7 @@ struct StatusBadge: View {
         switch status.lowercased() {
         case "running", "healthy", "success", "succeeded", "ready", "approved", "auto_approved": return .green
         case "deploying", "building", "pending", "queued", "in_progress", "progressing": return .orange
-        case "failed", "error", "unhealthy", "rolled_back": return .red
+        case "failed", "error", "unhealthy", "rolled_back", "unreachable": return .red
         default: return .gray
         }
     }

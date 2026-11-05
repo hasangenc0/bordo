@@ -5,11 +5,14 @@ struct RegionView: Identifiable {
     let region: Region
     let nodes: [NodeHealth]
     let deployments: [JSON]
+    let disk: DiskUsage?
+    /// Why an unreachable region stopped, from the control plane (disk first, then other causes).
+    let hint: String
 }
 
 struct RegionsView: View {
     let client: AgentClient
-    @StateObject private var data: Loader<(views: [RegionView], names: [String: String])>
+    @StateObject private var data: Loader<(views: [RegionView], names: [String: String], platformDisk: DiskUsage?)>
     @State private var adding = false
     @State private var joinFor: String?
 
@@ -23,10 +26,11 @@ struct RegionsView: View {
             var views: [RegionView] = []
             for r in rs {
                 let nodes = (try? await client.nodes(region: r.name)) ?? []
-                let deps = fl["regions"].array.first { $0["name"].str == r.name }?["deployments"].array ?? []
-                views.append(RegionView(region: r, nodes: nodes, deployments: deps))
+                let live = fl["regions"].array.first { $0["name"].str == r.name }
+                views.append(RegionView(region: r, nodes: nodes, deployments: live?["deployments"].array ?? [],
+                                        disk: live.flatMap { DiskUsage(json: $0["disk"]) }, hint: live?["hint"].str ?? ""))
             }
-            return (views, Dictionary(uniqueKeysWithValues: ps.map { ($0.id, $0.name) }))
+            return (views, Dictionary(uniqueKeysWithValues: ps.map { ($0.id, $0.name) }), DiskUsage(json: fl["platform_disk"]))
         })
     }
 
@@ -37,6 +41,17 @@ struct RegionsView: View {
                 Text("A region is a machine, or a small cluster, that runs your apps. Add one, run the command on it, and it appears here.")
                     .font(.footnote).foregroundStyle(.secondary)
                     .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 4, trailing: 20)).listRowSeparator(.hidden).listRowBackground(Color.clear)
+                if let notice = diskNotice() {
+                    Label(notice.text, systemImage: "externaldrive.badge.exclamationmark")
+                        .font(.footnote).foregroundStyle(notice.critical ? .red : .orange)
+                        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                        .background((notice.critical ? Color.red : Color.orange).opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                        .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 4, trailing: 20)).listRowSeparator(.hidden).listRowBackground(Color.clear)
+                }
+                if let d = data.value?.platformDisk {
+                    DiskBar(disk: d, label: "Bordo server disk")
+                        .cardRow()
+                }
                 ForEach(data.value?.views ?? []) { v in
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(spacing: 12) {
@@ -60,6 +75,12 @@ struct RegionsView: View {
                                     }
                                 }
                             }
+                        }
+                        DiskBar(disk: v.disk, label: "Machine disk")
+                        if !v.hint.isEmpty {
+                            Text(v.hint).font(.footnote).foregroundStyle(.red)
+                                .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
                         }
                         if v.region.status != "healthy" {
                             Button { joinFor = v.region.name } label: { Label("Get join command", systemImage: "terminal").font(.subheadline) }
@@ -94,6 +115,19 @@ struct RegionsView: View {
                 JoinRegionView(client: client, region: w.value) { await data.reload() }
             }
         }
+    }
+
+    /// A banner when any machine's disk is filling up: that is what takes a region offline.
+    private func diskNotice() -> (text: String, critical: Bool)? {
+        let regions = (data.value?.views ?? []).filter { $0.disk?.filling == true }
+        let server = data.value?.platformDisk.flatMap { $0.filling ? $0 : nil }
+        guard !regions.isEmpty || server != nil else { return nil }
+        var parts: [String] = []
+        if let server { parts.append("The Bordo server's disk is \(Int(server.usedPercent.rounded()))% full.") }
+        if !regions.isEmpty { parts.append("Disk is filling up on \(regions.map { $0.region.name }.joined(separator: ", ")).") }
+        parts.append("A full disk stops Kubernetes scheduling pods and takes the region offline.")
+        let critical = server?.level == "critical" || regions.contains { $0.disk?.level == "critical" }
+        return (parts.joined(separator: " "), critical)
     }
 
     private struct Wrapped: Identifiable { let value: String; var id: String { value } }

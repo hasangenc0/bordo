@@ -64,6 +64,30 @@ struct Region: Identifiable, Hashable {
     }
 }
 
+/// A machine's disk usage as the control plane reports it: the last reading a region's reconciler
+/// sent, or the measured disk of the Bordo server. A full disk is the usual reason a region goes
+/// unreachable, so the level (ok / warn / critical) is shown next to the region.
+struct DiskUsage: Hashable {
+    let totalBytes: Double
+    let freeBytes: Double
+    let usedPercent: Double
+    let level: String
+    let reportedAt: Date?
+
+    /// nil when `json` carries no reading (a reconciler that predates disk reporting).
+    init?(json: JSON) {
+        guard let total = json["total_bytes"].double, total > 0,
+              let free = json["free_bytes"].double else { return nil }
+        totalBytes = total
+        freeBytes = free
+        usedPercent = json["used_percent"].double ?? max(0, min(100, (total - free) / total * 100))
+        level = json["level"].str.nonEmpty ?? "ok"
+        reportedAt = Dates.parse(json["reported_at"].str)
+    }
+
+    var filling: Bool { level != "ok" }
+}
+
 struct NodeHealth: Identifiable, Hashable {
     var id: String { name }
     let name: String
