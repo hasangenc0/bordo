@@ -70,7 +70,9 @@ func regionAddTool(cp *CPClient) *Tool {
 				"instructions": "Tell the user to run join_command ON the target machine. " +
 					"Replace <control-plane-url-reachable-from-the-machine> with the Bordo " +
 					"server's address (e.g. http://<server-ip>:7401). The token is single-use " +
-					"and expires soon; call region_add again to mint another if needed.",
+					"and expires soon; call region_add again to mint another if needed. Use this for a NEW machine, " +
+					"or when the reconciler logs say 'invalid cluster token'. Do not offer it as the fix for an " +
+					"unreachable region without checking region_health's disk and hint first.",
 			}, nil
 		},
 	}
@@ -79,7 +81,7 @@ func regionAddTool(cp *CPClient) *Tool {
 func regionHealthTool(cp *CPClient) *Tool {
 	return &Tool{
 		Name:        "region_health",
-		Description: "Get node-level health for a region (reports from k3s nodes)",
+		Description: "Get a region's health: its status, the nodes reporting in, the machine's disk usage (disk: used_percent, free_bytes, level, reported_at) and, when the region is unreachable, a hint with the likely causes. Check this first when a region is unreachable or a deploy is stuck.",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -100,7 +102,7 @@ func regionHealthTool(cp *CPClient) *Tool {
 func fleetOverviewTool(cp *CPClient) *Tool {
 	return &Tool{
 		Name:        "fleet_overview",
-		Description: "Get a fleet-wide overview: all regions with their status and latest deployed services",
+		Description: "Get a fleet-wide overview: all regions with their status, disk usage, unreachable hint and latest deployed services, plus platform_disk (the disk of the machine Bordo itself runs on)",
 		Schema: map[string]any{
 			"type":       "object",
 			"properties": map[string]any{},
