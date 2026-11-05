@@ -164,7 +164,33 @@ func (h *handler) getHealth(w http.ResponseWriter, r *http.Request) {
 	if nodes == nil {
 		nodes = []NodeHealth{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"region": name, "nodes": nodes})
+	out := map[string]any{"region": name, "nodes": nodes}
+	if status, disk, ok := h.regionStatusAndDisk(r.Context(), name); ok {
+		out["status"] = status
+		if disk != nil {
+			out["disk"] = disk
+		}
+		if hint := UnreachableHint(status, disk); hint != "" {
+			out["hint"] = hint
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// regionStatusAndDisk returns a region's live status (derived from its last pull) and its last
+// reported disk usage. ok is false when the region does not exist.
+func (h *handler) regionStatusAndDisk(ctx context.Context, name string) (status string, disk *DiskUsage, ok bool) {
+	var (
+		lp, at      sql.NullTime
+		total, free sql.NullInt64
+	)
+	err := h.store.db.QueryRowContext(ctx,
+		`SELECT status, last_pull_at, disk_total_bytes, disk_free_bytes, disk_reported_at FROM regions WHERE name = ?`, name).
+		Scan(&status, &lp, &total, &free, &at)
+	if err != nil {
+		return "", nil, false
+	}
+	return deriveRegionStatus(status, lp), DiskFromRow(total, free, at), true
 }
 
 func (h *handler) add(w http.ResponseWriter, r *http.Request) {
@@ -206,18 +232,24 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 	// whose reconciler has gone quiet reads 'unreachable' instead of a latched
 	// 'healthy'. One cheap query, patched onto the stored rows.
 	pulls := map[string]sql.NullTime{}
-	if rows, qerr := h.store.db.QueryContext(r.Context(), `SELECT name, last_pull_at FROM regions`); qerr == nil {
+	disks := map[string]*DiskUsage{}
+	if rows, qerr := h.store.db.QueryContext(r.Context(),
+		`SELECT name, last_pull_at, disk_total_bytes, disk_free_bytes, disk_reported_at FROM regions`); qerr == nil {
 		defer rows.Close()
 		for rows.Next() {
 			var name string
-			var lp sql.NullTime
-			if rows.Scan(&name, &lp) == nil {
+			var lp, at sql.NullTime
+			var total, free sql.NullInt64
+			if rows.Scan(&name, &lp, &total, &free, &at) == nil {
 				pulls[name] = lp
+				disks[name] = DiskFromRow(total, free, at)
 			}
 		}
 	}
 	for _, reg := range regions {
 		reg.Status = deriveRegionStatus(reg.Status, pulls[reg.Name])
+		reg.Disk = disks[reg.Name]
+		reg.Hint = UnreachableHint(reg.Status, reg.Disk)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"regions": regions})
 }

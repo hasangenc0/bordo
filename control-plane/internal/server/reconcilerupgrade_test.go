@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -38,6 +39,7 @@ func requestUpgrade(s *Server, region, query string) (int, map[string]any) {
 }
 
 func TestReconcilerUpgradeFlow(t *testing.T) {
+	curRev := strconv.Itoa(fleet.ExpectedReconcilerRevision)
 	s, db := newStatusTestServer(t)
 	db.Exec(`INSERT INTO regions (id, name, status) VALUES ('reg1','eu','pending')`)
 	token, err := fleet.New(db).IssueClusterToken(context.Background(), "eu")
@@ -61,20 +63,20 @@ func TestReconcilerUpgradeFlow(t *testing.T) {
 	}
 
 	// A current reconciler is left alone unless forced.
-	pullDesired(s, token, "1")
+	pullDesired(s, token, curRev)
 	if _, out = requestUpgrade(s, "eu", ""); out["restart_requested"] != false {
 		t.Fatalf("a current reconciler must not be restarted: %v", out)
 	}
 
 	// A forced restart is delivered once; the ask is cleared after delivery.
-	s.recordReconcilerRevision("eu", 1)
+	s.recordReconcilerRevision("eu", fleet.ExpectedReconcilerRevision)
 	if _, out = requestUpgrade(s, "eu", "?force=true"); out["restart_requested"] != true {
 		t.Fatalf("force must request a restart: %v", out)
 	}
-	if got := pullDesired(s, token, "1"); got["restart"] != true {
+	if got := pullDesired(s, token, curRev); got["restart"] != true {
 		t.Fatalf("next pull must carry restart=true, got %v", got)
 	}
-	if got := pullDesired(s, token, "1"); got["restart"] == true {
+	if got := pullDesired(s, token, curRev); got["restart"] == true {
 		t.Fatalf("restart must be delivered only once, got %v", got)
 	}
 }

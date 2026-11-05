@@ -19,6 +19,10 @@ type Region struct {
 	Kubeconfig string `json:"-"` // credential: never serialize to API clients
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
+	// Disk is the machine's last reported disk usage and Hint explains an unreachable region.
+	// Both are filled in by the list endpoint, not stored on the row.
+	Disk *DiskUsage `json:"disk,omitempty"`
+	Hint string     `json:"hint,omitempty"`
 }
 
 // Cluster is a k3s cluster within a region.

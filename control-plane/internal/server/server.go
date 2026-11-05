@@ -573,6 +573,15 @@ func (s *Server) handleFleetDesiredState(w http.ResponseWriter, r *http.Request)
 	if rev, convErr := strconv.Atoi(r.Header.Get("X-Bordo-Reconciler-Revision")); convErr == nil {
 		s.recordReconcilerRevision(region, rev)
 	}
+	// The reconciler reports its machine's disk on every pull (revision 2+), so a filling disk
+	// shows up before the node starts refusing pods.
+	total, terr := strconv.ParseInt(r.Header.Get("X-Bordo-Disk-Total"), 10, 64)
+	free, ferr := strconv.ParseInt(r.Header.Get("X-Bordo-Disk-Free"), 10, 64)
+	if terr == nil && ferr == nil {
+		if err := fleet.New(s.db).RecordDisk(r.Context(), region, total, free); err != nil {
+			s.logger.Warn("record region disk", "region", region, "err", err)
+		}
+	}
 	if s.takeRestartRequest(region) {
 		s.logger.Info("asking the region's reconciler to restart", "region", region)
 		writeJSON(w, http.StatusOK, map[string]any{"region": region, "restart": true})
@@ -929,12 +938,15 @@ func (s *Server) handleFleetOverview(w http.ResponseWriter, r *http.Request) {
 		Region    string `json:"region"`
 	}
 	type regionOverview struct {
-		Name        string       `json:"name"`
-		Status      string       `json:"status"`
-		Deployments []deployment `json:"deployments"`
+		Name        string           `json:"name"`
+		Status      string           `json:"status"`
+		Deployments []deployment     `json:"deployments"`
+		Disk        *fleet.DiskUsage `json:"disk,omitempty"`
+		Hint        string           `json:"hint,omitempty"`
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `SELECT name, status, last_pull_at FROM regions ORDER BY name`)
+	rows, err := s.db.QueryContext(r.Context(),
+		`SELECT name, status, last_pull_at, disk_total_bytes, disk_free_bytes, disk_reported_at FROM regions ORDER BY name`)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -944,10 +956,12 @@ func (s *Server) handleFleetOverview(w http.ResponseWriter, r *http.Request) {
 	var regions []regionOverview
 	for rows.Next() {
 		var ro regionOverview
-		var lastPull sql.NullTime
-		if err := rows.Scan(&ro.Name, &ro.Status, &lastPull); err != nil {
+		var lastPull, diskAt sql.NullTime
+		var diskTotal, diskFree sql.NullInt64
+		if err := rows.Scan(&ro.Name, &ro.Status, &lastPull, &diskTotal, &diskFree, &diskAt); err != nil {
 			continue
 		}
+		ro.Disk = fleet.DiskFromRow(diskTotal, diskFree, diskAt)
 		// Derive live status from the region's last reconciler pull.
 		if lastPull.Valid {
 			if time.Since(lastPull.Time) <= fleet.RegionStaleAfter {
@@ -956,6 +970,7 @@ func (s *Server) handleFleetOverview(w http.ResponseWriter, r *http.Request) {
 				ro.Status = "unreachable"
 			}
 		}
+		ro.Hint = fleet.UnreachableHint(ro.Status, ro.Disk)
 		ro.Deployments = []deployment{}
 		regions = append(regions, ro)
 	}
@@ -988,7 +1003,13 @@ func (s *Server) handleFleetOverview(w http.ResponseWriter, r *http.Request) {
 	if regions == nil {
 		regions = []regionOverview{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"regions": regions})
+	out := map[string]any{"regions": regions}
+	// The machine the control plane itself runs on. It is often also a region's machine, and its
+	// caches and images fill the same disk.
+	if d := fleet.DiskOf("/"); d != nil {
+		out["platform_disk"] = d
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
