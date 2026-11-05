@@ -78,6 +78,15 @@ export interface Region {
   created_at: string
 }
 
+/** A machine's disk, as last reported by its reconciler (or measured, for the Bordo server). */
+export interface DiskUsage {
+  total_bytes: number
+  free_bytes: number
+  used_percent: number
+  level: 'ok' | 'warn' | 'critical'
+  reported_at?: string
+}
+
 export interface NodeHealth {
   name: string
   ready: boolean

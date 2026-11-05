@@ -2,26 +2,29 @@ import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { api, listRegions, normNode, relativeTime } from '../api'
 import { AddRegionModal } from '../components/AddRegionModal'
+import { DiskBar } from '../components/DiskBar'
 import { EmptyState } from '../components/EmptyState'
 import { PageHeader } from '../components/PageHeader'
 import { StatusBadge } from '../components/StatusBadge'
 import { useFetch } from '../hooks/useFetch'
-import type { NodeHealth, Project, Region } from '../types'
+import type { DiskUsage, NodeHealth, Project, Region } from '../types'
 import { Globe } from 'lucide-react'
 
 interface FleetDeployment { project_id: string; image_tag: string; status: string; region: string }
-interface FleetRegion { name: string; status: string; deployments: FleetDeployment[] }
+interface FleetRegion { name: string; status: string; deployments: FleetDeployment[]; disk?: DiskUsage; hint?: string }
 
 interface RegionView {
   region: Region
   nodes: NodeHealth[]
   deployments: FleetDeployment[]
+  disk?: DiskUsage
+  hint?: string
 }
 
-async function load(): Promise<{ views: RegionView[]; names: Record<string, string> }> {
+async function load(): Promise<{ views: RegionView[]; names: Record<string, string>; platformDisk?: DiskUsage }> {
   const [regions, fleet, projects] = await Promise.all([
     listRegions(),
-    api<{ regions: FleetRegion[] }>('/fleet').catch(() => ({ regions: [] as FleetRegion[] })),
+    api<{ regions: FleetRegion[]; platform_disk?: DiskUsage }>('/fleet').catch(() => ({ regions: [] as FleetRegion[], platform_disk: undefined })),
     api<{ projects: Project[] }>('/projects').catch(() => ({ projects: [] as Project[] })),
   ])
   const views = await Promise.all(
@@ -29,13 +32,13 @@ async function load(): Promise<{ views: RegionView[]; names: Record<string, stri
       const nodes = await api<{ nodes: Array<Record<string, unknown>> }>(`/regions/${encodeURIComponent(region.name)}/health`)
         .then((r) => (r.nodes ?? []).map(normNode))
         .catch(() => [] as NodeHealth[])
-      const deployments = fleet.regions?.find((f) => f.name === region.name)?.deployments ?? []
-      return { region, nodes, deployments }
+      const live = fleet.regions?.find((f) => f.name === region.name)
+      return { region, nodes, deployments: live?.deployments ?? [], disk: live?.disk, hint: live?.hint }
     }),
   )
   const names: Record<string, string> = {}
   for (const p of projects.projects ?? []) names[p.id] = p.name
-  return { views, names }
+  return { views, names, platformDisk: fleet.platform_disk }
 }
 
 export function RegionsPage() {
@@ -43,6 +46,8 @@ export function RegionsPage() {
   const [adding, setAdding] = useState(false)
   const [joining, setJoining] = useState<string | null>(null)
   const views = res.data?.views ?? []
+  const platformDisk = res.data?.platformDisk
+  const fillingRegions = views.filter((v) => v.disk && v.disk.level !== 'ok').map((v) => v.region.name)
 
   return (
     <div className="page-container">
@@ -53,6 +58,17 @@ export function RegionsPage() {
 
       {res.error && <div className="notice notice--error">{res.error}</div>}
 
+      {(fillingRegions.length > 0 || (platformDisk && platformDisk.level !== 'ok')) && (
+        <div className={`notice ${[platformDisk?.level, ...views.map((v) => v.disk?.level)].includes('critical') ? 'notice--error' : 'notice--warn'}`}>
+          {platformDisk && platformDisk.level !== 'ok' && <div>The Bordo server's disk is {Math.round(platformDisk.used_percent)}% full.</div>}
+          {fillingRegions.length > 0 && <div>Disk is filling up on: {fillingRegions.join(', ')}.</div>}
+          <div className="muted">
+            A full disk makes Kubernetes stop scheduling pods, which takes the region offline. Free space with <code>docker system df -v</code>,{' '}
+            <code>docker builder prune -f</code> and by clearing the sandbox cache volume.
+          </div>
+        </div>
+      )}
+
       {res.loading && !res.data && <div className="grid-2">{[1, 2].map((i) => <div key={i} className="skeleton" style={{ height: 150 }} />)}</div>}
 
       {!res.loading && views.length === 0 && !res.error && (
@@ -61,8 +77,15 @@ export function RegionsPage() {
         </div>
       )}
 
+      {platformDisk && (
+        <div className="card region-card" style={{ marginBottom: 14 }}>
+          <div className="region-name">Bordo server</div>
+          <DiskBar disk={platformDisk} label="Server disk" />
+        </div>
+      )}
+
       <div className="grid-2">
-        {views.map(({ region, nodes, deployments }) => (
+        {views.map(({ region, nodes, deployments, disk, hint }) => (
           <div key={region.name} className="card region-card">
             <div className="region-head">
               <span className="region-name">{region.name}</span>
@@ -83,6 +106,8 @@ export function RegionsPage() {
                 </span>
               </div>
             ))}
+            <DiskBar disk={disk} label="Machine disk" />
+            {hint && <div className="notice notice--error" style={{ marginTop: 10, marginBottom: 0 }}>{hint}</div>}
             {region.status !== 'healthy' && (
               <button className="btn btn-secondary btn-sm" style={{ marginTop: 10 }} onClick={() => setJoining(region.name)}>
                 Get join command

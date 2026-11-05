@@ -1253,3 +1253,14 @@ td.ellipsis { max-width: 280px; display: table-cell; }
 .form-error { color: var(--status-failed, #b3261e); font-size: 13px; margin: 0; }
 .settings-section { margin: 20px 0; }
 .settings-section h3 { font-size: 14px; margin: 0 0 8px; }
+
+/* Disk usage bar (regions page) */
+.disk { margin: 8px 0 4px; font-size: 12.5px; }
+.disk-row { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+.disk-row > span:first-child { color: var(--text-muted); font-size: 12px; }
+.disk-track { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+.disk-fill { height: 100%; border-radius: 3px; background: var(--status-running); transition: width .3s; }
+.disk[data-level="warn"] .disk-fill { background: var(--status-warning); }
+.disk[data-level="critical"] .disk-fill { background: var(--status-failed); }
+.disk[data-level="critical"] .disk-row > span:last-child { color: var(--status-failed); font-weight: 600; }
+.notice--warn { border-color: var(--status-warning); background: rgba(217, 131, 11, 0.06); }
