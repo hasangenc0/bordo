@@ -12,6 +12,7 @@ binaries, running the control plane locally, and completing the Build MVP flow:
 - **Git**
 - **Docker 24+** — needed for container builds (optional for the first steps)
 - macOS or Linux (Windows: use WSL2)
+- To run a server or a region: **25 GB of disk at least, 40 GB comfortable** (images and caches fill the disk, and a full disk takes a region offline)
 
 Check:
 

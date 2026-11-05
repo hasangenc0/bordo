@@ -11,6 +11,11 @@ guide takes you from a fresh server to a running, configured Bordo.
 - **Docker 24+** with the Compose plugin: `docker compose version` should print `v2.x`.
   The CLI checks for Docker and links the install docs if it's missing; it does
   not install Docker for you (that touches system packages).
+- **Disk: 25 GB at least, 40 GB or more is comfortable**, on the server and on every region
+  machine. Images (the sandbox image alone is over a GB), the sandbox dependency cache and
+  logs all live there, and a nearly full disk is how a region goes offline (see
+  [A region is unreachable](#a-region-is-unreachable)). `bordo platform status` and
+  `bordo region list` show how full each disk is.
 - The `bordo` binary (see [Install the CLI](#install-the-cli)).
 
 ---
@@ -211,6 +216,58 @@ bordo platform upgrade
 
 Pulls the newest images from GHCR and restarts services in place. Data volumes
 (`bordod-data`, `agent-data`) are never touched.
+
+---
+
+## Disk usage
+
+```bash
+bordo region list        # status + disk usage of every region, and the Bordo server
+bordo platform status    # services, plus this machine's disk
+```
+
+The web console and the iOS app show the same bars on the Regions screen, and the agent
+can read them (ask it "how full are my disks?"). A reading turns **warn** at 80% used and
+**critical** at 90%. A region reports its disk on every pull, so a region whose reconciler
+predates this (`bordo region upgrade <name>`) shows "not reported yet".
+
+`bordo upgrade` warns when the disk is tight before it pulls, removes the images it
+replaced, and clears Docker's build cache. The sandbox dependency cache is capped per
+slot (`BORDO_SANDBOX_CACHE_MAX_MB`, default 3072, times `BORDO_SANDBOX_PARALLEL` slots).
+
+## A region is unreachable
+
+A region is unreachable when its reconciler has not pulled for 90 seconds. The reason is
+usually on the machine, not in Bordo:
+
+```bash
+df -h                                                    # is the disk full?
+kubectl describe node | grep -iE 'pressure|taints'       # DiskPressure=True / disk-pressure taint
+kubectl -n bordo-system get pods                         # is the reconciler Running?
+kubectl -n bordo-system logs deploy/bordo-reconciler --tail=30
+```
+
+- **Disk full** (the common case). Kubelet taints the node `disk-pressure`, evicts pods and
+  will not schedule new ones, so the reconciler cannot restart. Free space
+  (`docker system df -v` shows what uses it; the `sandbox-cache` volume is safe to remove:
+  `docker compose rm -sf bordo-sandbox && docker volume rm <project>_sandbox-cache`), then
+  wait a few minutes: kubelet holds the taint for about five minutes after pressure clears.
+- **Reconciler logs show `invalid cluster token`.** The region's credential was revoked or the
+  control plane's database was reset. Only then run the join command again
+  (`bordo region token <name>`).
+- **Logs show connection errors.** The control plane URL the reconciler was given is no longer
+  reachable from the machine (the server's address or port changed, or it is down).
+- **The machine is offline.** Nothing to fix in Bordo.
+
+Re-running the join command is *not* the fix for a full disk: it installs k3s onto the same
+full disk.
+
+Regions created before the reconciler was hardened keep their old Deployment, which is
+`BestEffort` (the first thing kubelet evicts) and cannot be rescheduled while the node is
+tainted. `bordo region upgrade <name>` prints a one-line `kubectl patch` that gives it
+critical priority, tolerations for the pressure taints and resource requests. New regions
+get all of this at join time, plus kubelet image garbage collection from 70% disk usage and
+container log rotation.
 
 ---
 
