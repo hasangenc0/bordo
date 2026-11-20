@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -111,6 +112,8 @@ func Run(ctx context.Context, cfg Config) error {
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
 	}
+
+	s.tools.Register(tools.WebSearchTool(os.Getenv("BORDO_SEARCH_URL"), s.searchKey))
 
 	// Remove checkouts of deleted projects and clean ones unused for 30 days.
 	go s.tools.Code.Janitor(ctx, 6*time.Hour, 30*24*time.Hour)
@@ -468,6 +471,21 @@ func actionTargetFromInput(input map[string]any) string {
 		if v, ok := input[key]; ok {
 			return fmt.Sprintf("%v", v)
 		}
+	}
+	return ""
+}
+
+// searchKey is the API key for web_search: BORDO_SEARCH_API_KEY if set, otherwise the LLM key when
+// the LLM endpoint is DeepSeek's own (the search API shares its key). A gateway-issued LLM token
+// is not a DeepSeek key, so it is never sent there.
+func (s *Server) searchKey() string {
+	if k := os.Getenv("BORDO_SEARCH_API_KEY"); k != "" {
+		return k
+	}
+	s.provMu.Lock()
+	defer s.provMu.Unlock()
+	if u, err := url.Parse(s.anthropic.APIURL); err == nil && u.Hostname() == "api.deepseek.com" {
+		return s.anthropic.Token
 	}
 	return ""
 }
