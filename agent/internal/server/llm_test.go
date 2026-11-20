@@ -34,7 +34,7 @@ func TestOAIMessageAlwaysHasContent(t *testing.T) {
 }
 
 // fakeLLM serves scripted chat-completion replies, one per call.
-func fakeLLM(t *testing.T, replies []string, calls *int) *AnthropicClient {
+func fakeLLM(t *testing.T, replies []string, calls *int) *LLMClient {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		i := *calls
@@ -54,7 +54,7 @@ func fakeLLM(t *testing.T, replies []string, calls *int) *AnthropicClient {
 	old := llmRetryDelay
 	llmRetryDelay = time.Millisecond
 	t.Cleanup(func() { llmRetryDelay = old })
-	return &AnthropicClient{Token: "t", Model: "m", APIURL: srv.URL, http: srv.Client()}
+	return &LLMClient{Token: "t", Model: "m", APIURL: srv.URL, http: srv.Client()}
 }
 
 func textReply(text, finish string) string {
@@ -67,8 +67,8 @@ func toolReply() string {
 	return `{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"t","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`
 }
 
-func runLoop(c *AnthropicClient) (string, error) {
-	return c.RunAgentLoop(context.Background(), []AnthropicMessage{{Role: "user", Content: "go"}}, nil,
+func runLoop(c *LLMClient) (string, error) {
+	return c.RunAgentLoop(context.Background(), []LLMMessage{{Role: "user", Content: "go"}}, nil,
 		func(context.Context, string, map[string]any) (any, error) { return "ok", nil }, nil, nil)
 }
 

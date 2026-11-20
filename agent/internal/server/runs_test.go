@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 	"github.com/hasangenc0/bordo/agent/internal/chatstore"
 	"github.com/hasangenc0/bordo/agent/internal/tools"
@@ -71,7 +72,7 @@ func newChatHarness(t *testing.T) *chatHarness {
 		logger:          newLogger("error"),
 		sessions:        NewSessionStore(),
 		tools:           reg,
-		anthropic:       &AnthropicClient{Token: "t", Model: "m", APIURL: llm.URL, http: llm.Client()},
+		llm:             &LLMClient{Token: "t", Model: "m", APIURL: llm.URL, http: llm.Client()},
 		chats:           chats,
 		runs:            newRuns(),
 		providerFromEnv: true,
@@ -230,5 +231,51 @@ func TestSecondMessageWhileRunningIsRejected(t *testing.T) {
 	frames(t, c, "done")
 	if n := len(h.messages()); n != 2 {
 		t.Fatalf("the rejected message must not be stored, have %d messages", n)
+	}
+}
+
+func TestTruncateAndForkEndpoints(t *testing.T) {
+	chats, err := chatstore.Open(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	_ = chats.CreateSession(ctx, "a", "T")
+	for _, m := range [][2]string{{"user", "one"}, {"assistant", "r1"}, {"user", "two"}} {
+		_ = chats.AppendMessage(ctx, "a", m[0], m[1])
+	}
+	s := &Server{logger: newLogger("error"), chats: chats, runs: newRuns()}
+	post := func(h http.HandlerFunc, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "/chats/a/x", strings.NewReader(body))
+		rc := chi.NewRouteContext()
+		rc.URLParams.Add("id", "a")
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rc))
+		w := httptest.NewRecorder()
+		h(w, req)
+		return w
+	}
+
+	if w := post(s.handleTruncateChat, `{}`); w.Code != http.StatusBadRequest {
+		t.Errorf("missing index: %d", w.Code)
+	}
+	if w := post(s.handleTruncateChat, `{"user_index":9}`); w.Code != http.StatusNotFound {
+		t.Errorf("out of range: %d", w.Code)
+	}
+	if w := post(s.handleForkChat, `{"user_index":1}`); w.Code != http.StatusCreated {
+		t.Errorf("fork: %d %s", w.Code, w.Body)
+	}
+
+	// A running turn would write its reply after the cut, so truncating must wait for it.
+	s.runs.begin("a")
+	if w := post(s.handleTruncateChat, `{"user_index":1}`); w.Code != http.StatusConflict {
+		t.Errorf("while running: %d", w.Code)
+	}
+	s.runs.stop("a")
+	s.runs.end(s.runs.get("a"))
+	if w := post(s.handleTruncateChat, `{"user_index":1}`); w.Code != http.StatusOK {
+		t.Errorf("truncate: %d %s", w.Code, w.Body)
+	}
+	if msgs, _ := chats.GetMessages(ctx, "a"); len(msgs) != 2 {
+		t.Errorf("want 2 messages left, got %d", len(msgs))
 	}
 }

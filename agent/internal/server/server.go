@@ -4,6 +4,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -33,17 +34,17 @@ type Config struct {
 
 // Server is the bordo-agent HTTP server.
 type Server struct {
-	cfg       Config
-	logger    *slog.Logger
-	router    *chi.Mux
-	http      *http.Server
-	sessions  *SessionStore
-	tools     *tools.ToolRegistry
-	anthropic *AnthropicClient
-	upgrader  websocket.Upgrader
-	chats     *chatstore.Store
-	cpClient  *tools.CPClient
-	runs      *runs
+	cfg      Config
+	logger   *slog.Logger
+	router   *chi.Mux
+	http     *http.Server
+	sessions *SessionStore
+	tools    *tools.ToolRegistry
+	llm      *LLMClient
+	upgrader websocket.Upgrader
+	chats    *chatstore.Store
+	cpClient *tools.CPClient
+	runs     *runs
 
 	// Lazy LLM-config refresh: the agent may start before 'bordo setup'
 	// stores the key, and the key can change later. These let handleChat
@@ -101,7 +102,7 @@ func Run(ctx context.Context, cfg Config) error {
 		router:          chi.NewRouter(),
 		sessions:        NewSessionStore(),
 		tools:           tools.NewBordoToolRegistry(cpClient),
-		anthropic:       NewAnthropicClient(cfg.APIKey),
+		llm:             NewLLMClient(cfg.APIKey),
 		chats:           chatDB,
 		cpClient:        cpClient,
 		runs:            newRuns(),
@@ -157,6 +158,8 @@ func Run(ctx context.Context, cfg Config) error {
 	s.router.Get("/chats/{id}", s.handleGetChat)
 	s.router.Delete("/chats/{id}", s.handleDeleteChat)
 	s.router.Put("/chats/{id}/title", s.handleUpdateChatTitle)
+	s.router.Post("/chats/{id}/truncate", s.handleTruncateChat)
+	s.router.Post("/chats/{id}/fork", s.handleForkChat)
 
 	// Approval shortcuts (proxy to control plane)
 	s.router.Post("/approvals/{id}/approve", s.makeApprovalHandler("approve"))
@@ -484,8 +487,8 @@ func (s *Server) searchKey() string {
 	}
 	s.provMu.Lock()
 	defer s.provMu.Unlock()
-	if u, err := url.Parse(s.anthropic.APIURL); err == nil && u.Hostname() == "api.deepseek.com" {
-		return s.anthropic.Token
+	if u, err := url.Parse(s.llm.APIURL); err == nil && u.Hostname() == "api.deepseek.com" {
+		return s.llm.Token
 	}
 	return ""
 }
@@ -506,7 +509,7 @@ func (s *Server) refreshModelProvider() {
 	}
 	s.provMu.Lock()
 	defer s.provMu.Unlock()
-	if s.anthropic.Token != "" && time.Since(s.provFetched) < 30*time.Second {
+	if s.llm.Token != "" && time.Since(s.provFetched) < 30*time.Second {
 		return
 	}
 	rc, err := fetchRuntimeConfig(s.cpURL, s.cpToken)
@@ -515,13 +518,13 @@ func (s *Server) refreshModelProvider() {
 	}
 	s.provFetched = time.Now()
 	if rc.DeepSeekAPIKey != "" {
-		s.anthropic.Token = rc.DeepSeekAPIKey
+		s.llm.Token = rc.DeepSeekAPIKey
 	}
 	if rc.LLMModel != "" {
-		s.anthropic.Model = rc.LLMModel
+		s.llm.Model = rc.LLMModel
 	}
 	if rc.LLMURL != "" {
-		s.anthropic.APIURL = rc.LLMURL
+		s.llm.APIURL = rc.LLMURL
 	}
 }
 
@@ -572,4 +575,60 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func writeWSError(conn *websocket.Conn, msg string) {
 	b, _ := json.Marshal(map[string]string{"error": msg})
 	_ = conn.WriteMessage(websocket.TextMessage, b)
+}
+
+// userIndex reads {"user_index": n}: which of the chat's user messages (0-based) an edit, retry or
+// fork starts from.
+func userIndex(r *http.Request) (int, bool) {
+	var req struct {
+		UserIndex *int `json:"user_index"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UserIndex == nil || *req.UserIndex < 0 {
+		return 0, false
+	}
+	return *req.UserIndex, true
+}
+
+func (s *Server) chatStoreError(w http.ResponseWriter, err error) {
+	if errors.Is(err, chatstore.ErrNoSuchMessage) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "that message no longer exists in this chat"})
+		return
+	}
+	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+}
+
+// handleTruncateChat drops a user message and everything after it, ahead of a retry or an edit.
+// It refuses while a turn is running: that turn would write its reply after the cut.
+func (s *Server) handleTruncateChat(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	n, ok := userIndex(r)
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_index required"})
+		return
+	}
+	if s.runs.get(id) != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "The agent is still working on this chat. Stop it first."})
+		return
+	}
+	if err := s.chats.TruncateFromUser(r.Context(), id, n); err != nil {
+		s.chatStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleForkChat copies the conversation before a user message into a new chat.
+func (s *Server) handleForkChat(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	n, ok := userIndex(r)
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_index required"})
+		return
+	}
+	sess, err := s.chats.Fork(r.Context(), id, uuid.New().String(), n)
+	if err != nil {
+		s.chatStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, sess)
 }

@@ -47,15 +47,15 @@ const (
 		"- You cannot edit .github/workflows; if a change needs it, tell the user to edit it manually."
 )
 
-// AnthropicTool keeps the same name so callers in server.go don't change.
-type AnthropicTool struct {
+// LLMTool is a tool definition passed to the LLM.
+type LLMTool struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
 	InputSchema map[string]any `json:"input_schema"`
 }
 
-// AnthropicMessage keeps the same name so session.go doesn't change.
-type AnthropicMessage struct {
+// LLMMessage is one chat message.
+type LLMMessage struct {
 	Role    string `json:"role"`
 	Content any    `json:"content"` // string OR []oaiToolCall (assistant turns with tool calls)
 }
@@ -121,20 +121,19 @@ type oaiResponse struct {
 	} `json:"error"`
 }
 
-// AnthropicClient calls any OpenAI-compatible chat completions endpoint.
-// The name is kept for backward compatibility with server.go.
-type AnthropicClient struct {
+// LLMClient calls any OpenAI-compatible chat completions endpoint.
+type LLMClient struct {
 	Token  string
 	Model  string
 	APIURL string
 	http   *http.Client
 }
 
-// NewAnthropicClient creates a client.
+// NewLLMClient creates a client.
 // DEEPSEEK_API_KEY — API key for the LLM provider (required)
 // BORDO_LLM_MODEL  — model name override (default: deepseek-chat)
 // BORDO_LLM_URL    — completions endpoint override (default: https://api.deepseek.com/chat/completions)
-func NewAnthropicClient(apiKey string) *AnthropicClient {
+func NewLLMClient(apiKey string) *LLMClient {
 	token := os.Getenv("DEEPSEEK_API_KEY")
 	if token == "" {
 		token = apiKey
@@ -147,7 +146,7 @@ func NewAnthropicClient(apiKey string) *AnthropicClient {
 	if apiURL == "" {
 		apiURL = defaultLLMURL
 	}
-	return &AnthropicClient{
+	return &LLMClient{
 		Token:  token,
 		Model:  model,
 		APIURL: apiURL,
@@ -156,10 +155,10 @@ func NewAnthropicClient(apiKey string) *AnthropicClient {
 }
 
 // RunAgentLoop runs the full tool-calling agentic loop via the OpenAI-compatible API.
-func (c *AnthropicClient) RunAgentLoop(
+func (c *LLMClient) RunAgentLoop(
 	ctx context.Context,
-	messages []AnthropicMessage,
-	tools []AnthropicTool,
+	messages []LLMMessage,
+	tools []LLMTool,
 	toolCaller func(ctx context.Context, name string, input map[string]any) (any, error),
 	onText func(text string),
 	onToolCall func(name string, input map[string]any),
@@ -315,7 +314,7 @@ func stoppedEarly(finishReason, content string) bool {
 
 // callAPI calls the model, retrying the failures that are worth a retry: a rate limit, a server
 // error or a dropped connection. A slow or flaky provider otherwise ended the turn mid-task.
-func (c *AnthropicClient) callAPI(ctx context.Context, msgs []oaiMessage, tools []oaiTool) (*oaiResponse, error) {
+func (c *LLMClient) callAPI(ctx context.Context, msgs []oaiMessage, tools []oaiTool) (*oaiResponse, error) {
 	var lastErr error
 	for attempt := 0; attempt < maxLLMAttempts; attempt++ {
 		if attempt > 0 {
@@ -356,7 +355,7 @@ type llmStatusError struct {
 
 func (e *llmStatusError) Error() string { return fmt.Sprintf("LLM API %d: %s", e.status, e.body) }
 
-func (c *AnthropicClient) callAPIOnce(ctx context.Context, msgs []oaiMessage, tools []oaiTool) (*oaiResponse, error) {
+func (c *LLMClient) callAPIOnce(ctx context.Context, msgs []oaiMessage, tools []oaiTool) (*oaiResponse, error) {
 	body := oaiRequest{
 		Model:     c.Model,
 		MaxTokens: 8192,

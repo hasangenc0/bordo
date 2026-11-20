@@ -115,13 +115,13 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 		// The stored history is authoritative: another connection may have run the previous turn,
 		// and this connection's in-memory session would not have its reply.
-		history := session.ToAnthropicMessages()
+		history := session.ToLLMMessages()
 		if chatID != "" && s.chats != nil {
 			if msgs, err := s.chats.GetMessages(r.Context(), chatID); err == nil {
 				history = history[:0]
 				for _, m := range msgs {
 					if m.Role == "user" || m.Role == "assistant" {
-						history = append(history, AnthropicMessage{Role: m.Role, Content: m.Content})
+						history = append(history, LLMMessage{Role: m.Role, Content: m.Content})
 					}
 				}
 			}
@@ -135,7 +135,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 // runTurn runs one agent turn to completion, independent of any connection. Everything the user
 // should see goes through run.emit, which both streams it to attached clients and keeps it for
 // clients that connect later.
-func (s *Server) runTurn(ctx context.Context, r *run, chatID string, session *Session, history []AnthropicMessage, userContent string) {
+func (s *Server) runTurn(ctx context.Context, r *run, chatID string, session *Session, history []LLMMessage, userContent string) {
 	defer s.runs.end(r)
 
 	persist := func(reply string) {
@@ -159,7 +159,7 @@ func (s *Server) runTurn(ctx context.Context, r *run, chatID string, session *Se
 	// Pick up a key configured after startup (e.g. via 'bordo setup').
 	s.refreshModelProvider()
 
-	if s.anthropic.Token == "" {
+	if s.llm.Token == "" {
 		reply := fmt.Sprintf("(no model provider configured — run 'bordo setup' to set the DeepSeek key; received: %q)", userContent)
 		r.emit(WSFrame{Type: "message", Role: "assistant", Content: reply})
 		persist(reply)
@@ -169,20 +169,20 @@ func (s *Server) runTurn(ctx context.Context, r *run, chatID string, session *Se
 
 	// Build the tools list from the registry.
 	allTools := s.tools.List()
-	anthropicTools := make([]AnthropicTool, 0, len(allTools))
+	llmTools := make([]LLMTool, 0, len(allTools))
 	for _, t := range allTools {
 		schema := t.Schema
 		if schema == nil {
 			schema = map[string]any{"type": "object", "properties": map[string]any{}}
 		}
-		anthropicTools = append(anthropicTools, AnthropicTool{Name: t.Name, Description: t.Description, InputSchema: schema})
+		llmTools = append(llmTools, LLMTool{Name: t.Name, Description: t.Description, InputSchema: schema})
 	}
 
 	var fullReply string
-	_, loopErr := s.anthropic.RunAgentLoop(
+	_, loopErr := s.llm.RunAgentLoop(
 		ctx,
 		history,
-		anthropicTools,
+		llmTools,
 		func(ctx context.Context, name string, input map[string]any) (any, error) {
 			tool := s.tools.Get(name)
 			if tool == nil {
