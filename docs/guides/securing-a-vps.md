@@ -48,3 +48,15 @@ Tailscale IP, not a tunnel.
 - Keep `deploy/bordo/.env` at mode 600.
 - If you ever ran an older version with port 7401 reachable from the internet, rotate the GitHub
   login and the console password: `GET /github/token` used to answer without authentication.
+
+## The code sandbox
+
+`code_exec` runs repo code in the `bordo-sandbox` container. It needs the internet for dependencies, but
+its entrypoint installs an egress policy that rejects private, link-local, CGNAT and loopback
+destinations: the Docker host and gateway, other containers, your LAN or VPC, and the cloud metadata
+service at `169.254.169.254`. If the rules cannot be installed the container exits rather than run open.
+
+To allow an internal package mirror, set `BORDO_SANDBOX_ALLOW_CIDRS="10.0.0.5/32"` in `.env`.
+The container holds `NET_ADMIN` only so the entrypoint can do this; commands run as unprivileged
+users under `no-new-privileges`. For stronger isolation of untrusted code, run Docker with gVisor
+(`runsc`) or Sysbox as the runtime.

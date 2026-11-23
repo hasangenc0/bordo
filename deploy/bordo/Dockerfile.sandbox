@@ -28,8 +28,11 @@ RUN go build -ldflags="-s -w" -o /bordo-sandbox ./agent/cmd/bordo-sandbox
 # The runtime image carries the toolchains the agent builds and tests with. It holds no secrets and
 # is started on a network that cannot reach Bordo's own services.
 FROM golang:1.22-alpine
-RUN apk add --no-cache tini ca-certificates git bash curl make gcc musl-dev nodejs npm python3 py3-pip openjdk17-jdk maven
+RUN apk add --no-cache tini ca-certificates git bash curl make gcc musl-dev nodejs npm python3 py3-pip openjdk17-jdk maven iptables ip6tables
 COPY --from=build /bordo-sandbox /usr/local/bin/bordo-sandbox
+# Installs the egress policy (no private/link-local/host addresses), then execs the server.
+COPY deploy/bordo/sandbox-entrypoint.sh /usr/local/bin/sandbox-entrypoint.sh
+RUN chmod 755 /usr/local/bin/sandbox-entrypoint.sh
 EXPOSE 7403
 # tini is PID 1 so processes orphaned by commands are reaped instead of piling up as zombies.
-ENTRYPOINT ["/sbin/tini", "--", "bordo-sandbox"]
+ENTRYPOINT ["/sbin/tini", "--", "sandbox-entrypoint.sh", "bordo-sandbox"]

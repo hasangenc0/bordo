@@ -82,6 +82,9 @@ services:
       dockerfile: deploy/bordo/Dockerfile.sandbox
     environment:
       - BORDO_WORKSPACE=/workspaces
+      # Egress policy (see sandbox-entrypoint.sh): private, link-local and host addresses are blocked.
+      # Add a private package mirror here, space separated.
+      - BORDO_SANDBOX_ALLOW_CIDRS=${BORDO_SANDBOX_ALLOW_CIDRS:-}
     volumes:
       - agent-workspaces:/workspaces:ro
       - sandbox-cache:/cache
@@ -99,6 +102,9 @@ services:
       - SETGID
       - KILL
       - DAC_READ_SEARCH
+      # Only so the entrypoint can install the egress rules; commands run as unprivileged slot users
+      # under no-new-privileges and never hold it.
+      - NET_ADMIN
     security_opt:
       - no-new-privileges:true
     mem_limit: 1g
