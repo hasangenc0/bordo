@@ -3,6 +3,7 @@ package chatstore
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -152,4 +153,72 @@ func (s *Store) UpdateTitle(ctx context.Context, sessionID, title string) error 
 		`UPDATE chat_sessions SET title = ?, updated_at = datetime('now') WHERE id = ?`,
 		title, sessionID)
 	return err
+}
+
+// ErrNoSuchMessage means the chat has fewer user messages than the index asked for.
+var ErrNoSuchMessage = errors.New("no such message")
+
+// userMessageID is the row id of the chat's n-th (0-based) user message. Counting user messages
+// rather than rows lets a client that never sees row ids (tool cards and mid-turn notes are not
+// stored) still name a message.
+func (s *Store) userMessageID(ctx context.Context, sessionID string, n int) (int64, error) {
+	if n < 0 {
+		return 0, ErrNoSuchMessage
+	}
+	var id int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM chat_messages WHERE session_id = ? AND role = 'user' ORDER BY id LIMIT 1 OFFSET ?`,
+		sessionID, n).Scan(&id)
+	if err == sql.ErrNoRows {
+		return 0, ErrNoSuchMessage
+	}
+	return id, err
+}
+
+// TruncateFromUser deletes the chat's n-th user message and everything after it, so that message
+// can be retried or replaced by an edit.
+func (s *Store) TruncateFromUser(ctx context.Context, sessionID string, n int) error {
+	id, err := s.userMessageID(ctx, sessionID, n)
+	if err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM chat_messages WHERE session_id = ? AND id >= ?`, sessionID, id); err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE chat_sessions SET updated_at = datetime('now') WHERE id = ?`, sessionID)
+	return err
+}
+
+// Fork copies everything before the source chat's n-th user message into a new chat, leaving the
+// source untouched. The new chat is where an alternative to that message can be tried.
+func (s *Store) Fork(ctx context.Context, srcID, newID string, n int) (*ChatSession, error) {
+	src, err := s.GetSession(ctx, srcID)
+	if err != nil {
+		return nil, err
+	}
+	if src == nil {
+		return nil, ErrNoSuchMessage
+	}
+	cut, err := s.userMessageID(ctx, srcID, n)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO chat_sessions (id, title) VALUES (?, ?)`, newID, src.Title+" (fork)"); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO chat_messages (session_id, role, content, created_at)
+		 SELECT ?, role, content, created_at FROM chat_messages WHERE session_id = ? AND id < ? ORDER BY id`,
+		newID, srcID, cut); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return s.GetSession(ctx, newID)
 }
