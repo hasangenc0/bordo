@@ -12,6 +12,8 @@
 #   BORDO_CP_URL      control-plane URL reachable from this VM (required)
 #   BORDO_JOIN_TOKEN  one-time token from `bordo region add` (required)
 #   BORDO_VERSION     release tag to install (default: latest)
+#   BORDO_CF_ACCESS_CLIENT_ID / BORDO_CF_ACCESS_CLIENT_SECRET
+#                     Cloudflare Access service token, when the control plane is behind Access
 set -eu
 
 REPO="hasangenc0/bordo"

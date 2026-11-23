@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -254,5 +255,33 @@ func TestDefaultK3sExecReclaimsDiskEarly(t *testing.T) {
 		if !contains(DefaultK3sExec, want) {
 			t.Errorf("DefaultK3sExec missing %q", want)
 		}
+	}
+}
+
+func TestReconcilerManifestsCarryAccessTokenOnlyWhenSet(t *testing.T) {
+	base := reconcilerVars{CPURL: "https://api.example.com", ClusterToken: "ct", Image: "img", Namespace: "bordo-apps"}
+
+	plain := renderReconcilerManifests(base)
+	if strings.Contains(plain, "cf-access-client-id:") || strings.Contains(plain, "cf-access-client-secret:") {
+		t.Errorf("no Access token configured, but the Secret has one:\n%s", plain)
+	}
+	// The env refs are optional, so a Secret without the keys must not block the pod.
+	if !strings.Contains(plain, "optional: true") {
+		t.Error("Access env vars must be optional secret refs")
+	}
+
+	withToken := base
+	withToken.CFAccessID, withToken.CFAccessSecret = "abc.access", "s3cr3t"
+	m := renderReconcilerManifests(withToken)
+	for _, want := range []string{`cf-access-client-id: "abc.access"`, `cf-access-client-secret: "s3cr3t"`} {
+		if !strings.Contains(m, want) {
+			t.Errorf("manifest missing %q:\n%s", want, m)
+		}
+	}
+	// Half a token is no token.
+	half := base
+	half.CFAccessID = "abc.access"
+	if strings.Contains(renderReconcilerManifests(half), "cf-access-client-id:") {
+		t.Error("an id without a secret must not be rendered")
 	}
 }

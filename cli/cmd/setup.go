@@ -54,6 +54,7 @@ Power users can run the steps separately: 'bordo platform install',
 				server = "http://localhost:7401"
 			}
 			server = strings.TrimRight(server, "/")
+			installCFAccess(server) // --server may differ from the configured server
 			if deepSeekKey == "" {
 				deepSeekKey = os.Getenv("DEEPSEEK_API_KEY")
 			}

@@ -15,6 +15,9 @@ type Config struct {
 	Token      string `yaml:"token"`
 	AgentURL   string `yaml:"agent_url"`
 	AgentToken string `yaml:"agent_token"`
+	// Cloudflare Access service token, for a control plane published behind Cloudflare Access.
+	CFAccessClientID     string `yaml:"cf_access_client_id,omitempty"`
+	CFAccessClientSecret string `yaml:"cf_access_client_secret,omitempty"`
 }
 
 // Default returns the path to the CLI config file.
@@ -67,8 +70,12 @@ func Set(key, value string) error {
 		cfg.AgentURL = value
 	case "agent_token":
 		cfg.AgentToken = value
+	case "cf_access_client_id":
+		cfg.CFAccessClientID = value
+	case "cf_access_client_secret":
+		cfg.CFAccessClientSecret = value
 	default:
-		return fmt.Errorf("unknown config key %q (valid: server, token, agent_url, agent_token)", key)
+		return fmt.Errorf("unknown config key %q (valid: server, token, agent_url, agent_token, cf_access_client_id, cf_access_client_secret)", key)
 	}
 	return Save(cfg)
 }
@@ -88,7 +95,11 @@ func Get(key string) (string, error) {
 		return cfg.AgentURL, nil
 	case "agent_token":
 		return cfg.AgentToken, nil
+	case "cf_access_client_id":
+		return cfg.CFAccessClientID, nil
+	case "cf_access_client_secret":
+		return cfg.CFAccessClientSecret, nil
 	default:
-		return "", fmt.Errorf("unknown config key %q (valid: server, token, agent_url, agent_token)", key)
+		return "", fmt.Errorf("unknown config key %q (valid: server, token, agent_url, agent_token, cf_access_client_id, cf_access_client_secret)", key)
 	}
 }

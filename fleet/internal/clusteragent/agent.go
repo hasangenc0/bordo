@@ -20,6 +20,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hasangenc0/bordo/fleet/internal/cfaccess"
 )
 
 const (
@@ -57,6 +59,10 @@ type Config struct {
 	// DetectPublicIP (BORDO_DETECT_PUBLIC_IP, default on) lets the reconciler ask an IP-echo
 	// service for the machine's public address so the control plane can build NodePort URLs.
 	DetectPublicIP bool
+	// Cloudflare Access service token (BORDO_CF_ACCESS_CLIENT_ID / _SECRET), for a control plane
+	// published behind Access. Optional.
+	CFAccessID     string
+	CFAccessSecret string
 }
 
 // ConfigFromEnv builds and validates a Config from environment variables.
@@ -66,6 +72,9 @@ func ConfigFromEnv() (Config, error) {
 		ClusterToken: os.Getenv("BORDO_CLUSTER_TOKEN"),
 		Interval:     defaultInterval,
 		Namespace:    defaultNamespace,
+
+		CFAccessID:     os.Getenv(cfaccess.EnvClientID),
+		CFAccessSecret: os.Getenv(cfaccess.EnvClientSecret),
 
 		DetectPublicIP: !strings.EqualFold(os.Getenv("BORDO_DETECT_PUBLIC_IP"), "false"),
 	}
@@ -175,6 +184,7 @@ func (a *Agent) publicIP(ctx context.Context) string {
 
 // New builds an Agent that applies via kubectl using the pod's in-cluster RBAC.
 func New(cfg Config) *Agent {
+	cfaccess.Install(cfg.CPURL, cfg.CFAccessID, cfg.CFAccessSecret)
 	return &Agent{
 		cfg:     cfg,
 		httpc:   &http.Client{Timeout: 30 * time.Second},

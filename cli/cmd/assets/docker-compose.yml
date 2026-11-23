@@ -145,6 +145,27 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
+  # Cloudflare Tunnel: connects OUT to Cloudflare, which serves the console and API behind Access.
+  # `docker compose --profile cloudflare up -d` after running deploy/cloudflare/setup.sh (it writes
+  # CLOUDFLARE_TUNNEL_TOKEN to .env). No inbound ports are needed; keep the loopback bind and close 80/443.
+  cloudflared:
+    image: cloudflare/cloudflared:2026.11.1
+    profiles: ["cloudflare"]
+    command: tunnel --no-autoupdate --metrics 127.0.0.1:2000 run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    depends_on:
+      - bordo-console
+      - bordod
+    restart: unless-stopped
+    logging: *default-logging
+
 networks:
   sandbox: {}
 

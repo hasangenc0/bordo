@@ -23,7 +23,8 @@ func configSetCmd() *cobra.Command {
 		Short: "Set a configuration value (local CLI config or server setting)",
 		Long: `Set a configuration value.
 
-Local CLI keys:    server, token, agent_url, agent_token
+Local CLI keys:    server, token, agent_url, agent_token,
+                   cf_access_client_id, cf_access_client_secret (Cloudflare Access service token)
 Server settings:   deepseek_api_key, base_url, llm_model, llm_url, registry_url
                    (stored on the Bordo server; requires login)`,
 		Args: cobra.ExactArgs(2),

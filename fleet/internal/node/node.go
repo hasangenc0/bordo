@@ -22,6 +22,8 @@ import (
 	"strings"
 	"text/template"
 	"time"
+
+	"github.com/hasangenc0/bordo/fleet/internal/cfaccess"
 )
 
 // DefaultK3sVersion is the pinned k3s version the agent installs. Pinning (vs a
@@ -45,6 +47,10 @@ type Config struct {
 	ReconcilerImage  string // BORDO_RECONCILER_IMAGE — on-cluster reconciler image
 	AppsNamespace    string // BORDO_APPS_NAMESPACE — namespace apps deploy into
 	SkipK3s          bool   // BORDO_NODE_SKIP_K3S=1 — dry run, skip the actual install (testing)
+	// Cloudflare Access service token, for a control plane published behind Access. Used by this
+	// agent and handed to the on-cluster reconciler so it can pull too.
+	CFAccessID     string // BORDO_CF_ACCESS_CLIENT_ID
+	CFAccessSecret string // BORDO_CF_ACCESS_CLIENT_SECRET
 }
 
 // DefaultReconcilerImage is the on-cluster reconciler container image.
@@ -86,6 +92,8 @@ func ConfigFromEnv() (Config, error) {
 		ReconcilerImage:  envOr("BORDO_RECONCILER_IMAGE", DefaultReconcilerImage),
 		AppsNamespace:    envOr("BORDO_APPS_NAMESPACE", DefaultAppsNamespace),
 		SkipK3s:          os.Getenv("BORDO_NODE_SKIP_K3S") == "1",
+		CFAccessID:       os.Getenv(cfaccess.EnvClientID),
+		CFAccessSecret:   os.Getenv(cfaccess.EnvClientSecret),
 	}
 	if c.NodeName == "" {
 		c.NodeName, _ = os.Hostname()
@@ -239,6 +247,9 @@ type reconcilerVars struct {
 	ClusterToken string
 	Image        string
 	Namespace    string
+	// Optional Cloudflare Access service token; rendered into the Secret only when set.
+	CFAccessID     string
+	CFAccessSecret string
 }
 
 // renderReconcilerManifests produces the Kubernetes manifests that install the
@@ -302,6 +313,10 @@ metadata:
 type: Opaque
 stringData:
   cluster-token: {{.ClusterToken}}
+{{- if and .CFAccessID .CFAccessSecret}}
+  cf-access-client-id: {{printf "%q" .CFAccessID}}
+  cf-access-client-secret: {{printf "%q" .CFAccessSecret}}
+{{- end}}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -356,6 +371,19 @@ spec:
                 secretKeyRef:
                   name: bordo-reconciler-creds
                   key: cluster-token
+            # Present only when the control plane sits behind Cloudflare Access.
+            - name: BORDO_CF_ACCESS_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: bordo-reconciler-creds
+                  key: cf-access-client-id
+                  optional: true
+            - name: BORDO_CF_ACCESS_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: bordo-reconciler-creds
+                  key: cf-access-client-secret
+                  optional: true
 `))
 
 // readKubeconfig reads the k3s kubeconfig and rewrites the server address from
@@ -375,6 +403,7 @@ func readKubeconfig(path, advertiseAddr string) (string, error) {
 
 // Run executes the full node bootstrap: redeem → install k3s → register.
 func Run(ctx context.Context, cfg Config) error {
+	cfaccess.Install(cfg.CPURL, cfg.CFAccessID, cfg.CFAccessSecret)
 	httpc := &http.Client{Timeout: 30 * time.Second}
 
 	fmt.Println("[bordo-node] redeeming join token...")
@@ -411,6 +440,9 @@ func Run(ctx context.Context, cfg Config) error {
 		ClusterToken: clusterToken,
 		Image:        cfg.ReconcilerImage,
 		Namespace:    cfg.AppsNamespace,
+
+		CFAccessID:     cfg.CFAccessID,
+		CFAccessSecret: cfg.CFAccessSecret,
 	})
 	if err := kubectlApply(ctx, cfg.KubeconfigPath, manifests); err != nil {
 		return fmt.Errorf("deploy reconciler: %w", err)

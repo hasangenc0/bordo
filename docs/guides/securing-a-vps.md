@@ -18,14 +18,17 @@ VPS as a high-value target. A stolen password alone should not be enough to reac
 
 ## Reaching it
 
-Pick one.
+**Recommended: Cloudflare Tunnel + Access.** No inbound ports at all, SSO-style login for people and a
+service token for machines, set up by one script. See [cloudflare-access.md](cloudflare-access.md).
+
+Alternatives, if you do not use Cloudflare:
 
 **SSH tunnel (simplest).** From your machine:
 
     ssh -L 3000:localhost:3000 -L 7401:localhost:7401 you@your-vps
     bordo setup --server http://localhost:7401
 
-**Tailscale (recommended for daily use).** Install Tailscale on the VPS and your devices, then set
+**Tailscale or WireGuard.** Install Tailscale on the VPS and your devices, then set
 `BIND_ADDR=<the VPS's tailscale IP>` in `.env`. Nothing is reachable from the public internet.
 
 **HTTPS on a domain (Caddy profile).** Point `<domain>` and `api.<domain>` at the VPS, then in `.env`:
