@@ -11,6 +11,7 @@ RUN apk add --no-cache gettext openssl  # envsubst; openssl hashes the console p
 
 COPY --from=frontend-build /app/dist /usr/share/nginx/html
 COPY deploy/bordo/nginx-console.conf.template /etc/nginx/templates/default.conf.template
+COPY deploy/bordo/nginx-security-headers.conf /etc/nginx/security-headers.conf
 COPY deploy/bordo/console-entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh && \
     # Remove default nginx config so our template is the only one

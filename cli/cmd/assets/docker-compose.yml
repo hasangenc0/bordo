@@ -5,11 +5,14 @@ x-logging: &default-logging
     max-size: "10m"
     max-file: "3"
 
+# Published ports bind to loopback by default. Docker publishes with its own iptables rules, which
+# bypass ufw, so "0.0.0.0" means open to the internet whatever the host firewall says. Reach the
+# stack through an SSH tunnel, Tailscale (set BIND_ADDR to the tailscale IP) or the TLS proxy below.
 services:
   bordod:
     image: ${BORDOD_IMAGE:-ghcr.io/hasangenc0/bordod:latest}
     ports:
-      - "${BORDOD_PORT:-7401}:7401"
+      - "${BORDOD_BIND:-${BIND_ADDR:-127.0.0.1}}:${BORDOD_PORT:-7401}:7401"
     environment:
       - BORDO_SERVER_PORT=7401
       - BORDO_STORE_PATH=/data/bordod.db
@@ -36,7 +39,7 @@ services:
   bordo-agent:
     image: ${AGENT_IMAGE:-ghcr.io/hasangenc0/bordo-agent:latest}
     ports:
-      - "${AGENT_PORT:-7402}:7402"
+      - "${AGENT_BIND:-${BIND_ADDR:-127.0.0.1}}:${AGENT_PORT:-7402}:7402"
     environment:
       - BORDO_AGENT_PORT=7402
       - BORDO_CP_URL=http://bordod:7401
@@ -95,7 +98,7 @@ services:
   bordo-console:
     image: ${CONSOLE_IMAGE:-ghcr.io/hasangenc0/bordo-console:latest}
     ports:
-      - "${CONSOLE_PORT:-3000}:80"
+      - "${CONSOLE_BIND:-${BIND_ADDR:-127.0.0.1}}:${CONSOLE_PORT:-3000}:80"
     environment:
       - BORDO_AGENT_TOKEN=${BORDO_INTERNAL_TOKEN}
       - BORDO_CONSOLE_PASSWORD=${BORDO_CONSOLE_PASSWORD:?run 'bordo platform up' to generate one, or set it in .env}
@@ -103,6 +106,36 @@ services:
     memswap_limit: 64m
     depends_on:
       - bordo-agent
+    restart: unless-stopped
+    logging: *default-logging
+
+  # Optional TLS front door: `docker compose --profile tls up -d` with BORDO_DOMAIN set (DNS for the
+  # domain and api.<domain> pointing here). Caddy gets Let's Encrypt certificates on its own. With
+  # it, keep the BIND_ADDR default so only 80/443 are public.
+  caddy:
+    image: caddy:2.8.4-alpine
+    profiles: ["tls"]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        printf '{$$BORDO_DOMAIN} {\n  reverse_proxy bordo-console:80\n}\napi.{$$BORDO_DOMAIN} {\n  reverse_proxy bordod:7401\n}\n' > /tmp/Caddyfile
+        exec caddy run --config /tmp/Caddyfile --adapter caddyfile
+    environment:
+      - BORDO_DOMAIN=${BORDO_DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      - bordo-console
     restart: unless-stopped
     logging: *default-logging
 
@@ -114,3 +147,5 @@ volumes:
   agent-data:
   agent-workspaces:
   sandbox-cache:
+  caddy-data:
+  caddy-config:

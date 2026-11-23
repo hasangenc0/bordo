@@ -1,5 +1,17 @@
+# Per-client request budget. Basic auth has no lockout of its own, so this is what slows down
+# password guessing: a browser loading the SPA stays well under it, a guesser does not. Behind the
+# Caddy TLS proxy every client shares the proxy's address, so keep the rate generous.
+limit_req_zone $binary_remote_addr zone=bordo_console:10m rate=20r/s;
+limit_req_status 429;
+
+server_tokens off;
+
 server {
     listen 80;
+    limit_req zone=bordo_console burst=60 nodelay;
+
+    include /etc/nginx/security-headers.conf;
+
     root /usr/share/nginx/html;
     index index.html;
 
@@ -17,6 +29,7 @@ server {
         auth_basic off;
         return 200 "ok";
         add_header Content-Type text/plain;
+        include /etc/nginx/security-headers.conf;
     }
 
     # /api/tools → /mcp/tools on the agent (exact match wins over prefix below)
@@ -55,11 +68,13 @@ server {
     location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?)$ {
         expires 1y;
         add_header Cache-Control "public, immutable";
+        include /etc/nginx/security-headers.conf;
     }
 
     # SPA fallback — must be last
     location / {
         try_files $uri $uri/ /index.html;
         add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+        include /etc/nginx/security-headers.conf;
     }
 }
