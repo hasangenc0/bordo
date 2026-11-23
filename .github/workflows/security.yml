@@ -1,0 +1,56 @@
+name: Security
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  schedule:
+    - cron: "17 5 * * 1" # weekly: new advisories land without any code change
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0 # scan history, not just the tip
+      - name: Scan for committed secrets
+        run: |
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.21.2 \
+            detect --source /repo --redact --verbose
+
+  govulncheck:
+    name: govulncheck (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [agent, build, cli, control-plane, fleet, observe, release]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.work
+          cache: false
+      - name: Check ${{ matrix.module }} for known vulnerabilities
+        working-directory: ${{ matrix.module }}
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+
+  trivy:
+    name: trivy (repo)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Scan lockfiles and go.sum for known vulnerabilities and secrets
+        uses: aquasecurity/trivy-action@915b19bbe73b92a6cf82a1bc12b087c9a19a5fe2 # v0.28.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
