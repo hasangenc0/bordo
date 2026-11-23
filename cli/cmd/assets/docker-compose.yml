@@ -20,7 +20,7 @@ services:
       - BORDO_VM_URL=http://victoriametrics:8428
       - BORDO_LOKI_URL=http://loki:3100
       - BORDO_TEMPO_URL=http://tempo:3200
-      - BORDO_AUTH_TOKEN=${BORDO_INTERNAL_TOKEN}
+      - BORDO_AUTH_TOKEN=${BORDO_INTERNAL_TOKEN:?BORDO_INTERNAL_TOKEN must be set; without it the API would be open}
       # OAuth App client id for "Connect GitHub" in the console (Device Flow enabled).
       - BORDO_GITHUB_CLIENT_ID=${BORDO_GITHUB_CLIENT_ID:-}
     volumes:
@@ -43,8 +43,8 @@ services:
     environment:
       - BORDO_AGENT_PORT=7402
       - BORDO_CP_URL=http://bordod:7401
-      - BORDO_TOKEN=${BORDO_INTERNAL_TOKEN}
-      - BORDO_AGENT_TOKEN=${BORDO_INTERNAL_TOKEN}
+      - BORDO_TOKEN=${BORDO_INTERNAL_TOKEN:?BORDO_INTERNAL_TOKEN must be set}
+      - BORDO_AGENT_TOKEN=${BORDO_AGENT_TOKEN:-${BORDO_INTERNAL_TOKEN}}
       - BORDO_CHAT_DB=/data/agent-chats.db
       - BORDO_WORKSPACE=/data/workspaces
       - BORDO_SANDBOX_URL=http://bordo-sandbox:7403
@@ -100,7 +100,7 @@ services:
     ports:
       - "${CONSOLE_BIND:-${BIND_ADDR:-127.0.0.1}}:${CONSOLE_PORT:-3000}:80"
     environment:
-      - BORDO_AGENT_TOKEN=${BORDO_INTERNAL_TOKEN}
+      - BORDO_AGENT_TOKEN=${BORDO_AGENT_TOKEN:-${BORDO_INTERNAL_TOKEN}}
       - BORDO_CONSOLE_PASSWORD=${BORDO_CONSOLE_PASSWORD:?run 'bordo platform up' to generate one, or set it in .env}
     mem_limit: 64m
     memswap_limit: 64m

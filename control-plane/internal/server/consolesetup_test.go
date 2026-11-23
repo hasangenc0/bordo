@@ -131,3 +131,20 @@ func TestGithubRoutesRequireToken(t *testing.T) {
 		t.Errorf("/github/app/setup with token = %d, want 200", code)
 	}
 }
+
+func TestBearerEquals(t *testing.T) {
+	for _, c := range []struct {
+		header, token string
+		want          bool
+	}{
+		{"Bearer abc", "abc", true},
+		{"Bearer abcd", "abc", false},
+		{"Bearer ab", "abc", false},
+		{"abc", "abc", false},
+		{"", "abc", false},
+	} {
+		if got := bearerEquals(c.header, c.token); got != c.want {
+			t.Errorf("bearerEquals(%q, %q) = %v, want %v", c.header, c.token, got, c.want)
+		}
+	}
+}

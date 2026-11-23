@@ -3,6 +3,7 @@ package setup
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
@@ -92,7 +93,7 @@ func (h *Handler) HandleSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.SetupToken != h.setupToken {
+	if subtle.ConstantTimeCompare([]byte(req.SetupToken), []byte(h.setupToken)) != 1 {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid setup token"})
 		return
 	}

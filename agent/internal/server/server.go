@@ -3,6 +3,8 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -131,8 +133,7 @@ func Run(ctx context.Context, cfg Config) error {
 			}
 			// Accept token via Authorization header or ?token= query param
 			// (query param lets the browser WebSocket connect without custom headers).
-			tok := r.Header.Get("Authorization")
-			if tok == "Bearer "+agentToken || r.URL.Query().Get("token") == agentToken {
+			if tokenOK(r.Header.Get("Authorization"), r.URL.Query().Get("token"), agentToken) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -631,4 +632,19 @@ func (s *Server) handleForkChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, sess)
+}
+
+// tokenOK reports whether the Authorization header ("Bearer <token>") or the query token matches
+// want. Comparing digests in constant time keeps response timing from leaking how much of a
+// guessed token was right.
+func tokenOK(authHeader, queryToken, want string) bool {
+	if tok, ok := strings.CutPrefix(authHeader, "Bearer "); ok && safeEqual(tok, want) {
+		return true
+	}
+	return queryToken != "" && safeEqual(queryToken, want)
+}
+
+func safeEqual(got, want string) bool {
+	a, b := sha256.Sum256([]byte(got)), sha256.Sum256([]byte(want))
+	return subtle.ConstantTimeCompare(a[:], b[:]) == 1
 }

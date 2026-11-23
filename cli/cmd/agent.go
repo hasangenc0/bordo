@@ -207,7 +207,7 @@ func createChatSession(agentURL, token string) (string, error) {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		msg := strings.TrimSpace(string(body))
 		if resp.StatusCode == http.StatusUnauthorized {
-			return "", fmt.Errorf("agent rejected the request (401): set the agent token with 'bordo config set agent_token <BORDO_INTERNAL_TOKEN>' (from your deploy .env)")
+			return "", fmt.Errorf("agent rejected the request (401): set the agent token with 'bordo config set agent_token <BORDO_AGENT_TOKEN>' (from your deploy .env; older installs use BORDO_INTERNAL_TOKEN)")
 		}
 		return "", fmt.Errorf("agent returned %s: %s", resp.Status, msg)
 	}

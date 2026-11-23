@@ -95,6 +95,10 @@ setup_env() {
       echo "BORDO_INTERNAL_TOKEN=$tok" >> "$env_file"
       info "Generated BORDO_INTERNAL_TOKEN (internal service token)"
     fi
+    if ! grep -q "^BORDO_AGENT_TOKEN=.\+" "$env_file" 2>/dev/null; then
+      echo "BORDO_AGENT_TOKEN=$(openssl rand -hex 32)" >> "$env_file"
+      info "Generated BORDO_AGENT_TOKEN (console/CLI to agent)"
+    fi
     if ! grep -q "^BORDO_CONSOLE_PASSWORD=.\+" "$env_file" 2>/dev/null; then
       echo "BORDO_CONSOLE_PASSWORD=$(openssl rand -hex 16)" >> "$env_file"
       info "Generated BORDO_CONSOLE_PASSWORD (console login)"
@@ -127,6 +131,8 @@ setup_env() {
 
 # Internal service-to-service token (Docker network only — not the admin token).
 BORDO_INTERNAL_TOKEN=$internal_token
+# Token the console and CLI use to talk to the agent.
+BORDO_AGENT_TOKEN=$(openssl rand -hex 32)
 
 # Login for the web console (username: bordo).
 BORDO_CONSOLE_PASSWORD=$console_pw

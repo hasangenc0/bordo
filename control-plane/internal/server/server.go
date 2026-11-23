@@ -4,6 +4,7 @@ package server
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -259,7 +260,7 @@ func (s *Server) requireToken() func(http.Handler) http.Handler {
 				return
 			}
 			auth := r.Header.Get("Authorization")
-			if (admin != "" && auth == "Bearer "+admin) || (internal != "" && auth == "Bearer "+internal) {
+			if (admin != "" && bearerEquals(auth, admin)) || (internal != "" && bearerEquals(auth, internal)) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -1043,4 +1044,11 @@ func (s *Server) slogMiddleware() func(http.Handler) http.Handler {
 			next.ServeHTTP(ww, r)
 		})
 	}
+}
+
+// bearerEquals reports whether header is "Bearer <token>". It compares SHA-256 digests in constant
+// time so response timing does not reveal how much of a guessed token matched.
+func bearerEquals(header, token string) bool {
+	a, b := sha256.Sum256([]byte(header)), sha256.Sum256([]byte("Bearer "+token))
+	return subtle.ConstantTimeCompare(a[:], b[:]) == 1
 }

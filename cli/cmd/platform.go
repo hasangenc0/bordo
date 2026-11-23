@@ -108,15 +108,23 @@ func runPlatformInstall(force, quiet bool) error {
 		if err != nil {
 			return err
 		}
+		// The console and CLI reach the agent with their own token, so the agent-facing secret
+		// can be rotated or leaked without also being the bordod credential.
+		agentTok, err := randomToken()
+		if err != nil {
+			return err
+		}
 		env := fmt.Sprintf(
 			"# Bordo platform config — edit ports here; keep the secrets secret.\n"+
 				"BORDO_INTERNAL_TOKEN=%s\n"+
+				"# Token the console and CLI use to talk to the agent.\n"+
+				"BORDO_AGENT_TOKEN=%s\n"+
 				"# Login for the web console (username: bordo).\n"+
 				"BORDO_CONSOLE_PASSWORD=%s\n"+
 				"BORDOD_PORT=7401\n"+
 				"AGENT_PORT=7402\n"+
 				"CONSOLE_PORT=3000\n",
-			token, consolePW,
+			token, agentTok, consolePW,
 		)
 		if err := os.WriteFile(envPath, []byte(env), 0o600); err != nil {
 			return fmt.Errorf("writing .env: %w", err)
@@ -128,7 +136,11 @@ func runPlatformInstall(force, quiet bool) error {
 
 	// Sync the internal token into the CLI config so 'bordo agent chat'
 	// can authenticate to the agent directly.
-	if tok := readEnvValue(envPath, "BORDO_INTERNAL_TOKEN"); tok != "" {
+	tok := readEnvValue(envPath, "BORDO_AGENT_TOKEN")
+	if tok == "" {
+		tok = readEnvValue(envPath, "BORDO_INTERNAL_TOKEN") // .env from before the split
+	}
+	if tok != "" {
 		if err := config.Set("agent_token", tok); err != nil {
 			fmt.Printf("Warning: could not save agent token to CLI config: %v\n", err)
 		}
