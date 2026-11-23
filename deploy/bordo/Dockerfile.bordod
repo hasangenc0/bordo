@@ -31,7 +31,7 @@ COPY scripts/ scripts/
 
 RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o /bordod ./control-plane/
 
-FROM alpine:3.20
+FROM alpine:3.24
 # git is required for pushing scaffolded code to GitHub repos.
 # kubectl is kept for future fleet management.
 # docker-cli removed: builds now run in GitHub Actions, not on the VPS.
