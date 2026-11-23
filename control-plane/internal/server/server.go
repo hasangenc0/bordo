@@ -293,9 +293,11 @@ func (s *Server) registerRoutes() {
 		s.router.Post("/setup", s.setupHandler.HandleSetup)
 	}
 
-	// GitHub App OAuth callbacks — must be reachable by the admin's browser
-	// after GitHub redirects; no token needed (the user is on VPN).
-	s.router.Mount("/github", s.githubHandler.Routes())
+	// Legacy GitHub App browser flow. These routes register app credentials and store
+	// GitHub tokens, so they need the bearer token like everything else; the standard
+	// self-hosted path is the device flow under /v1/github. The old public /github/token
+	// and /github/status returned the stored GitHub token and its metadata to anyone.
+	s.router.With(s.requireToken()).Mount("/github", s.githubHandler.Routes())
 
 	// Node-join redeem (ADR-0006 Phase 1) — node-facing, no admin token. It is
 	// gated by the single-use join token in the body; the node agent calls it

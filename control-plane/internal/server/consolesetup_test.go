@@ -108,3 +108,26 @@ func TestGithubDeviceStartNeedsClientID(t *testing.T) {
 		t.Fatalf("status = %d", code)
 	}
 }
+
+// The legacy /github routes store GitHub credentials and used to expose the stored token
+// without any authentication.
+func TestGithubRoutesRequireToken(t *testing.T) {
+	ts := newConsoleTestServer(t)
+	for _, path := range []string{"/github/token", "/github/status", "/github/app/setup", "/github/app/install", "/github/app/callback?code=x"} {
+		res, err := http.Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusUnauthorized {
+			t.Errorf("GET %s without a token = %d, want 401", path, res.StatusCode)
+		}
+	}
+	// With the token the route is reachable again (404 for the removed token route).
+	if code, _ := call(t, ts, "GET", "/github/token", "", ""); code != http.StatusNotFound && code != http.StatusMethodNotAllowed {
+		t.Errorf("/github/token with token = %d, want it removed", code)
+	}
+	if code, _ := call(t, ts, "GET", "/github/app/setup", "", ""); code != http.StatusOK {
+		t.Errorf("/github/app/setup with token = %d, want 200", code)
+	}
+}

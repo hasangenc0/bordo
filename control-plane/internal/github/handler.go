@@ -35,8 +35,6 @@ func (h *Handler) Routes() http.Handler {
 	r.Get("/app/installed", h.handleInstalled)
 	r.Get("/app/auth", h.handleAuth)
 	r.Get("/app/auth/callback", h.handleAuthCallback)
-	r.Get("/status", h.handleStatus)
-	r.Get("/token", h.handleToken)
 	return r
 }
 
@@ -356,19 +354,6 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"user_token_expires_at": tokenExpires,
 		"user_token_error":      errString(tokenErr),
 	})
-}
-
-func (h *Handler) handleToken(w http.ResponseWriter, r *http.Request) {
-	tok, tokType, err := h.GetInstallationTokenFromStore(r.Context())
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	if tok == "" {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "github not configured"})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"token": tok, "type": tokType})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
