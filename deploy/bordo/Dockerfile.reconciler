@@ -27,7 +27,7 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /bordo-reconciler ./fleet/bordo-r
 
 # Runtime: the reconciler shells out to kubectl using the pod's in-cluster
 # ServiceAccount (no kubeconfig), so kubectl must be present.
-FROM alpine:3.20
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates kubectl
 COPY --from=build /bordo-reconciler /usr/local/bin/bordo-reconciler
 ENTRYPOINT ["bordo-reconciler"]
